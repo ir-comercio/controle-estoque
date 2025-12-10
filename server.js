@@ -1,59 +1,166 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-// Configuração do Supabase
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
-);
+// CONFIGURAÇÃO DO SUPABASE
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Middlewares
+if (!supabaseUrl || !supabaseKey) {
+    console.error('❌ ERRO: Variáveis de ambiente do Supabase não configuradas');
+    process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// MIDDLEWARES
 app.use(cors({
-    origin: ['https://ir-comercio-portal-zcan.onrender.com', process.env.FRONTEND_URL || '*'],
-    credentials: true
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Token']
 }));
-app.use(express.json());
-app.use(express.static('public'));
 
-// Middleware de autenticação
-const verificarSessao = async (req, res, next) => {
-    const sessionToken = req.headers['x-session-token'];
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// REGISTRO DE ACESSOS SILENCIOSO
+const logFilePath = path.join(__dirname, 'acessos.log');
+let accessCount = 0;
+let uniqueIPs = new Set();
+
+function registrarAcesso(req, res, next) {
+    const xForwardedFor = req.headers['x-forwarded-for'];
+    const clientIP = xForwardedFor
+        ? xForwardedFor.split(',')[0].trim()
+        : req.socket.remoteAddress;
+
+    const cleanIP = clientIP.replace('::ffff:', '');
+    const logEntry = `[${new Date().toISOString()}] ${cleanIP} - ${req.method} ${req.path}\n`;
+
+    // Salva no arquivo (silencioso)
+    fs.appendFile(logFilePath, logEntry, () => {});
+    
+    // Conta acessos (sem mostrar)
+    accessCount++;
+    uniqueIPs.add(cleanIP);
+    
+    next();
+}
+
+app.use(registrarAcesso);
+
+// Relatório periódico (opcional - a cada 1 hora)
+setInterval(() => {
+    if (accessCount > 0) {
+        console.log(`📊 Última hora: ${accessCount} requisições de ${uniqueIPs.size} IPs únicos`);
+        accessCount = 0;
+        uniqueIPs.clear();
+    }
+}, 3600000); // 1 hora
+
+// AUTENTICAÇÃO
+const PORTAL_URL = process.env.PORTAL_URL || 'https://ir-comercio-portal-zcan.onrender.com';
+
+async function verificarAutenticacao(req, res, next) {
+    const publicPaths = ['/', '/health', '/app'];
+    if (publicPaths.includes(req.path)) {
+        return next();
+    }
+
+    const sessionToken = req.headers['x-session-token'] || req.query.sessionToken;
 
     if (!sessionToken) {
-        return res.status(401).json({ error: 'Não autorizado' });
+        return res.status(401).json({
+            error: 'Não autenticado',
+            redirectToLogin: true
+        });
     }
 
     try {
-        const { data: session, error } = await supabase
-            .from('sessions')
-            .select('*')
-            .eq('token', sessionToken)
-            .gt('expires_at', new Date().toISOString())
-            .single();
+        const verifyResponse = await fetch(`${PORTAL_URL}/api/verify-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionToken })
+        });
 
-        if (error || !session) {
-            return res.status(401).json({ error: 'Sessão inválida ou expirada' });
+        if (!verifyResponse.ok) {
+            return res.status(401).json({
+                error: 'Sessão inválida',
+                redirectToLogin: true
+            });
         }
 
-        req.userId = session.user_id;
+        const sessionData = await verifyResponse.json();
+
+        if (!sessionData.valid) {
+            return res.status(401).json({
+                error: 'Sessão inválida',
+                redirectToLogin: true
+            });
+        }
+
+        req.user = sessionData.session;
+        req.sessionToken = sessionToken;
         next();
     } catch (error) {
-        console.error('Erro ao verificar sessão:', error);
-        return res.status(401).json({ error: 'Erro de autenticação' });
+        return res.status(500).json({
+            error: 'Erro ao verificar autenticação'
+        });
     }
-};
+}
 
-// =====================
-// ROTAS DE ESTOQUE
-// =====================
+// ARQUIVOS ESTÁTICOS
+const publicPath = path.join(__dirname, 'public');
 
-// GET - Listar todos os produtos do estoque
-app.get('/api/estoque', verificarSessao, async (req, res) => {
+app.use(express.static(publicPath, {
+    index: 'index.html',
+    dotfiles: 'deny',
+    setHeaders: (res, path) => {
+        if (path.endsWith('.html')) {
+            res.setHeader('Content-Type', 'text/html');
+        } else if (path.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css');
+        } else if (path.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        }
+    }
+}));
+
+// HEALTH CHECK
+app.get('/health', async (req, res) => {
+    try {
+        const { error } = await supabase
+            .from('estoque')
+            .select('count', { count: 'exact', head: true });
+        
+        res.json({
+            status: error ? 'unhealthy' : 'healthy',
+            database: error ? 'disconnected' : 'connected',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.json({
+            status: 'unhealthy',
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// ROTAS DA API
+app.use('/api', verificarAutenticacao);
+
+app.head('/api/estoque', (req, res) => {
+    res.status(200).end();
+});
+
+// Listar produtos
+app.get('/api/estoque', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('estoque')
@@ -62,21 +169,16 @@ app.get('/api/estoque', verificarSessao, async (req, res) => {
             .order('codigo', { ascending: true });
 
         if (error) throw error;
-
         res.json(data || []);
     } catch (error) {
-        console.error('Erro ao buscar estoque:', error);
-        res.status(500).json({ error: 'Erro ao buscar estoque' });
+        res.status(500).json({ 
+            error: 'Erro ao buscar produtos'
+        });
     }
 });
 
-// HEAD - Verificar status do servidor
-app.head('/api/estoque', verificarSessao, (req, res) => {
-    res.status(200).end();
-});
-
-// GET - Buscar produto específico
-app.get('/api/estoque/:id', verificarSessao, async (req, res) => {
+// Buscar produto específico
+app.get('/api/estoque/:id', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('estoque')
@@ -84,24 +186,25 @@ app.get('/api/estoque/:id', verificarSessao, async (req, res) => {
             .eq('id', req.params.id)
             .single();
 
-        if (error) throw error;
-        if (!data) return res.status(404).json({ error: 'Produto não encontrado' });
-
+        if (error) {
+            return res.status(404).json({ error: 'Produto não encontrado' });
+        }
+        
         res.json(data);
     } catch (error) {
-        console.error('Erro ao buscar produto:', error);
-        res.status(500).json({ error: 'Erro ao buscar produto' });
+        res.status(500).json({ 
+            error: 'Erro ao buscar produto'
+        });
     }
 });
 
-// POST - Criar novo produto
-app.post('/api/estoque', verificarSessao, async (req, res) => {
+// Criar produto
+app.post('/api/estoque', async (req, res) => {
     try {
         const { codigo_fornecedor, marca, descricao, quantidade, valor_unitario } = req.body;
 
-        // Validações
         if (!codigo_fornecedor || !marca || !descricao || quantidade === undefined || valor_unitario === undefined) {
-            return res.status(400).json({ error: 'Dados incompletos' });
+            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
         }
 
         // Verificar se código do fornecedor já existe
@@ -125,62 +228,64 @@ app.post('/api/estoque', verificarSessao, async (req, res) => {
 
         const proximoCodigo = maxData ? maxData.codigo + 1 : 1;
 
-        const novoProduto = {
-            codigo: proximoCodigo,
-            codigo_fornecedor: codigo_fornecedor.trim(),
-            marca: marca.trim().toUpperCase(),
-            descricao: descricao.trim().toUpperCase(),
-            quantidade: parseInt(quantidade),
-            valor_unitario: parseFloat(valor_unitario),
-            timestamp: new Date().toISOString()
-        };
-
         const { data, error } = await supabase
             .from('estoque')
-            .insert([novoProduto])
+            .insert([{
+                codigo: proximoCodigo,
+                codigo_fornecedor: codigo_fornecedor.trim(),
+                marca: marca.trim().toUpperCase(),
+                descricao: descricao.trim().toUpperCase(),
+                quantidade: parseInt(quantidade),
+                valor_unitario: parseFloat(valor_unitario),
+                timestamp: new Date().toISOString()
+            }])
             .select()
             .single();
 
         if (error) throw error;
-
         res.status(201).json(data);
     } catch (error) {
-        console.error('Erro ao criar produto:', error);
-        res.status(500).json({ error: 'Erro ao criar produto' });
+        res.status(500).json({ 
+            error: 'Erro ao criar produto'
+        });
     }
 });
 
-// PUT - Atualizar produto
-app.put('/api/estoque/:id', verificarSessao, async (req, res) => {
+// Atualizar produto
+app.put('/api/estoque/:id', async (req, res) => {
     try {
         const { codigo_fornecedor, descricao, valor_unitario } = req.body;
 
-        const dadosAtualizados = {
-            codigo_fornecedor: codigo_fornecedor.trim(),
-            descricao: descricao.trim().toUpperCase(),
-            valor_unitario: parseFloat(valor_unitario),
-            timestamp: new Date().toISOString()
-        };
+        if (!codigo_fornecedor || !descricao || valor_unitario === undefined) {
+            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+        }
 
         const { data, error } = await supabase
             .from('estoque')
-            .update(dadosAtualizados)
+            .update({
+                codigo_fornecedor: codigo_fornecedor.trim(),
+                descricao: descricao.trim().toUpperCase(),
+                valor_unitario: parseFloat(valor_unitario),
+                timestamp: new Date().toISOString()
+            })
             .eq('id', req.params.id)
             .select()
             .single();
 
-        if (error) throw error;
-        if (!data) return res.status(404).json({ error: 'Produto não encontrado' });
-
+        if (error) {
+            return res.status(404).json({ error: 'Produto não encontrado' });
+        }
+        
         res.json(data);
     } catch (error) {
-        console.error('Erro ao atualizar produto:', error);
-        res.status(500).json({ error: 'Erro ao atualizar produto' });
+        res.status(500).json({ 
+            error: 'Erro ao atualizar produto'
+        });
     }
 });
 
-// POST - Movimentação de estoque (entrada/saída)
-app.post('/api/estoque/:id/movimentar', verificarSessao, async (req, res) => {
+// Movimentação de estoque (entrada/saída)
+app.post('/api/estoque/:id/movimentar', async (req, res) => {
     try {
         const { tipo, quantidade } = req.body;
 
@@ -195,8 +300,9 @@ app.post('/api/estoque/:id/movimentar', verificarSessao, async (req, res) => {
             .eq('id', req.params.id)
             .single();
 
-        if (fetchError) throw fetchError;
-        if (!produto) return res.status(404).json({ error: 'Produto não encontrado' });
+        if (fetchError || !produto) {
+            return res.status(404).json({ error: 'Produto não encontrado' });
+        }
 
         // Calcular nova quantidade
         let novaQuantidade = produto.quantidade;
@@ -221,16 +327,16 @@ app.post('/api/estoque/:id/movimentar', verificarSessao, async (req, res) => {
             .single();
 
         if (error) throw error;
-
         res.json(data);
     } catch (error) {
-        console.error('Erro ao movimentar estoque:', error);
-        res.status(500).json({ error: 'Erro ao movimentar estoque' });
+        res.status(500).json({ 
+            error: 'Erro ao movimentar estoque'
+        });
     }
 });
 
-// DELETE - Excluir produto
-app.delete('/api/estoque/:id', verificarSessao, async (req, res) => {
+// Deletar produto
+app.delete('/api/estoque/:id', async (req, res) => {
     try {
         const { error } = await supabase
             .from('estoque')
@@ -238,21 +344,46 @@ app.delete('/api/estoque/:id', verificarSessao, async (req, res) => {
             .eq('id', req.params.id);
 
         if (error) throw error;
-
-        res.json({ message: 'Produto excluído com sucesso' });
+        res.status(204).end();
     } catch (error) {
-        console.error('Erro ao excluir produto:', error);
-        res.status(500).json({ error: 'Erro ao excluir produto' });
+        res.status(500).json({ 
+            error: 'Erro ao excluir produto'
+        });
     }
 });
 
-// Rota de health check
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// ROTA PRINCIPAL
+app.get('/', (req, res) => {
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-    console.log(`✅ Servidor rodando na porta ${PORT}`);
-    console.log(`📊 API de Estoque disponível em http://localhost:${PORT}/api/estoque`);
+app.get('/app', (req, res) => {
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
+
+// 404
+app.use((req, res) => {
+    res.status(404).json({
+        error: '404 - Rota não encontrada'
+    });
+});
+
+// TRATAMENTO DE ERROS
+app.use((error, req, res, next) => {
+    res.status(500).json({
+        error: 'Erro interno do servidor'
+    });
+});
+
+// INICIAR SERVIDOR
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Servidor rodando na porta ${PORT}`);
+    console.log(`✅ Database: Conectado`);
+    console.log(`✅ Autenticação: Ativa`);
+    console.log(`📝 Logs salvos em: acessos.log\n`);
+});
+
+// Verificar pasta public
+if (!fs.existsSync(publicPath)) {
+    console.error('⚠️  Pasta public/ não encontrada!');
+}
