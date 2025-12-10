@@ -201,10 +201,10 @@ app.get('/api/estoque/:id', async (req, res) => {
 // Criar produto
 app.post('/api/estoque', async (req, res) => {
     try {
-        const { codigo_fornecedor, marca, descricao, quantidade, valor_unitario } = req.body;
+        const { codigo_fornecedor, ncm, marca, descricao, quantidade, valor_unitario } = req.body;
 
         if (!codigo_fornecedor || !marca || !descricao || quantidade === undefined || valor_unitario === undefined) {
-            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+            return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
         }
 
         // Verificar se código do fornecedor já existe
@@ -233,6 +233,7 @@ app.post('/api/estoque', async (req, res) => {
             .insert([{
                 codigo: proximoCodigo,
                 codigo_fornecedor: codigo_fornecedor.trim(),
+                ncm: ncm ? ncm.trim() : null,
                 marca: marca.trim().toUpperCase(),
                 descricao: descricao.trim().toUpperCase(),
                 quantidade: parseInt(quantidade),
@@ -254,16 +255,17 @@ app.post('/api/estoque', async (req, res) => {
 // Atualizar produto
 app.put('/api/estoque/:id', async (req, res) => {
     try {
-        const { codigo_fornecedor, descricao, valor_unitario } = req.body;
+        const { codigo_fornecedor, ncm, descricao, valor_unitario } = req.body;
 
         if (!codigo_fornecedor || !descricao || valor_unitario === undefined) {
-            return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+            return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
         }
 
         const { data, error } = await supabase
             .from('estoque')
             .update({
                 codigo_fornecedor: codigo_fornecedor.trim(),
+                ncm: ncm ? ncm.trim() : null,
                 descricao: descricao.trim().toUpperCase(),
                 valor_unitario: parseFloat(valor_unitario),
                 timestamp: new Date().toISOString()
