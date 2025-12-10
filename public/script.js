@@ -392,7 +392,7 @@ function showEditProductModal(id) {
                     <div class="form-grid">
                         <div class="form-group">
                             <label>Código</label>
-                            <input type="text" value="${String(produto.codigo).padStart(6, '0')}" disabled style="background: var(--th-bg); color: white; font-weight: 700;">
+                            <input type="text" value="${produto.codigo}" disabled style="background: var(--th-bg); color: white; font-weight: 700;">
                         </div>
                         <div class="form-group">
                             <label>Marca</label>
@@ -552,7 +552,7 @@ window.viewProduct = function(id) {
                 <div style="background: var(--input-bg); padding: 1rem; border-radius: 8px; overflow-wrap: break-word;">
                     <div class="info-line">
                         <span class="info-label">Código de Estoque:</span>
-                        <span class="info-value"><strong>${String(produto.codigo).padStart(6, '0')}</strong></span>
+                        <span class="info-value"><strong>${produto.codigo}</strong></span>
                     </div>
                     <div class="info-line">
                         <span class="info-label">Modelo:</span>
@@ -799,7 +799,7 @@ function renderProducts(produtosToRender) {
 
     const rows = produtosToRender.map(p => `
         <tr>
-            <td><strong>${String(p.codigo).padStart(6, '0')}</strong></td>
+            <td><strong>${p.codigo}</strong></td>
             <td>${p.codigo_fornecedor}</td>
             <td><strong>${p.marca}</strong></td>
             <td>${p.descricao}</td>
@@ -899,7 +899,7 @@ function generateInventoryPDF() {
         startY += 7;
 
         const tableData = productsInGroup.map(p => [
-            String(p.codigo).padStart(6, '0'),
+            String(p.codigo),
             p.codigo_fornecedor,
             p.descricao.substring(0, 50),
             p.quantidade.toString(),
