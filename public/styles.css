@@ -290,6 +290,7 @@ table {
     border-radius: 8px;
     overflow: hidden;
     margin-top: 1rem;
+    table-layout: fixed;
 }
 
 thead { background: var(--th-bg); }
@@ -310,10 +311,13 @@ td {
     border-bottom: 1px solid var(--border-color);
     font-size: 0.9rem;
     color: var(--text-primary);
+    overflow-wrap: break-word;
     word-wrap: break-word;
-    word-break: break-word;
+    word-break: break-all;
+    hyphens: auto;
     white-space: normal;
     max-width: 300px;
+    overflow: hidden;
 }
 
 tbody tr { background: var(--bg-card); }
@@ -411,6 +415,12 @@ tbody tr:hover { background: var(--table-hover); }
 .modal-content.large { max-width: 900px; }
 .modal-content.compact { max-width: 500px; }
 
+/* Garantir que o conteúdo do modal não transborde */
+.modal-content > div {
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+}
+
 @keyframes scaleIn { to { transform: scale(1); } }
 
 .modal-header {
@@ -486,11 +496,14 @@ tbody tr:hover { background: var(--table-hover); }
 
 .info-value {
     color: var(--text-primary);
+    overflow-wrap: break-word;
     word-wrap: break-word;
-    word-break: break-word;
+    word-break: break-all;
+    hyphens: auto;
     white-space: normal;
     text-align: right;
     max-width: 350px;
+    overflow: hidden;
 }
 
 /* BOTÕES FLUTUANTES */
