@@ -293,8 +293,12 @@ function showAddProductModal() {
                 <form id="addProductForm">
                     <div class="form-grid">
                         <div class="form-group">
-                            <label>Código do Fornecedor *</label>
+                            <label>Código do Fornecedor (Modelo) *</label>
                             <input type="text" id="codigoFornecedor" required placeholder="Ex: 3200">
+                        </div>
+                        <div class="form-group">
+                            <label>NCM</label>
+                            <input type="text" id="ncm" placeholder="Ex: 12345678">
                         </div>
                         <div class="form-group">
                             <label>Marca *</label>
@@ -351,6 +355,7 @@ function showAddProductModal() {
 
         const formData = {
             codigo_fornecedor: codigoFornecedor,
+            ncm: document.getElementById('ncm').value.trim() || null,
             marca: document.getElementById('marca').value.trim().toUpperCase(),
             descricao: document.getElementById('descricao').value.trim().toUpperCase(),
             quantidade: parseInt(document.getElementById('quantidade').value),
@@ -394,8 +399,12 @@ function showEditProductModal(id) {
                             <input type="text" value="${produto.marca}" disabled style="background: var(--th-bg); color: white;">
                         </div>
                         <div class="form-group">
-                            <label>Código do Fornecedor *</label>
+                            <label>Código do Fornecedor (Modelo) *</label>
                             <input type="text" id="editCodigoFornecedor" value="${produto.codigo_fornecedor}" required>
+                        </div>
+                        <div class="form-group">
+                            <label>NCM</label>
+                            <input type="text" id="editNcm" value="${produto.ncm || ''}" placeholder="Ex: 12345678">
                         </div>
                         <div class="form-group">
                             <label>Valor Unitário (R$) *</label>
@@ -430,6 +439,7 @@ function showEditProductModal(id) {
 
         const formData = {
             codigo_fornecedor: document.getElementById('editCodigoFornecedor').value.trim(),
+            ncm: document.getElementById('editNcm').value.trim() || null,
             descricao: document.getElementById('editDescricao').value.trim().toUpperCase(),
             valor_unitario: parseFloat(document.getElementById('editValorUnitario').value)
         };
@@ -545,8 +555,12 @@ window.viewProduct = function(id) {
                         <span class="info-value"><strong>${String(produto.codigo).padStart(6, '0')}</strong></span>
                     </div>
                     <div class="info-line">
-                        <span class="info-label">Código do Fornecedor:</span>
+                        <span class="info-label">Modelo:</span>
                         <span class="info-value" style="word-break: break-all;">${produto.codigo_fornecedor}</span>
+                    </div>
+                    <div class="info-line">
+                        <span class="info-label">NCM:</span>
+                        <span class="info-value">${produto.ncm || '-'}</span>
                     </div>
                     <div class="info-line">
                         <span class="info-label">Marca:</span>
@@ -811,12 +825,12 @@ function renderProducts(produtosToRender) {
                 <thead>
                     <tr>
                         <th style="width: 80px;">Código</th>
-                        <th style="width: 120px;">Cód. Fornecedor</th>
+                        <th style="width: 120px;">Modelo</th>
                         <th style="width: 120px;">Marca</th>
                         <th>Descrição</th>
                         <th style="width: 100px; text-align: center;">Quantidade</th>
-                        <th style="width: 120px; text-align: right;">Valor Unit.</th>
-                        <th style="width: 150px;">Última Alteração</th>
+                        <th style="width: 120px; text-align: right;">Vlr. Un.</th>
+                        <th style="width: 120px;">Alteração</th>
                         <th style="width: 320px;">Ações</th>
                     </tr>
                 </thead>
@@ -970,9 +984,7 @@ function formatDateTime(isoString) {
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${day}/${month}/${year} ${hours}:${minutes}`;
+    return `${day}/${month}/${year}`;
 }
 
 function formatDate(isoString) {
