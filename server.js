@@ -13,7 +13,10 @@ const supabase = createClient(
 );
 
 // Middlewares
-app.use(cors());
+app.use(cors({
+    origin: ['https://ir-comercio-portal-zcan.onrender.com', process.env.FRONTEND_URL || '*'],
+    credentials: true
+}));
 app.use(express.json());
 app.use(express.static('public'));
 
