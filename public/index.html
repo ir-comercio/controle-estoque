@@ -4,67 +4,96 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Estoque</title>
+    <link rel="icon" type="image/png" href="I.R.-COMERCIO-E-MATERIAIS-ELETRICOS-PRETO.png">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <!-- Splash Screen -->
     <div class="splash-screen" id="splashScreen">
-        <h1 class="splash-title">Estoque</h1>
+        <div class="loader"></div>
     </div>
 
-    <!-- Conteúdo Principal -->
+    <!-- App Content -->
     <div class="app-content">
         <div class="container">
             <div class="header">
-                <h1>Estoque</h1>
-                <div id="connectionStatus" class="connection-status offline">
-                    <span class="status-dot"></span>
-                </div>
-            </div>
-
-            <div id="statusMessage" class="hidden"></div>
-
-            <div class="card">
-                <div style="margin-bottom: 1.5rem;">
-                    <label style="display: block; margin-bottom: 1rem; font-weight: 600; color: var(--text-primary);">
-                        Filtrar por Marca:
-                    </label>
-                    <div id="marcasFilter" style="display: flex; gap: 0.75rem; flex-wrap: wrap;"></div>
-                </div>
-                <div class="filter-section">
-                    <div class="form-group">
-                        <label for="search">Pesquisar</label>
-                        <input type="text" id="search" placeholder="Código, marca, descrição..." oninput="filterProducts()">
+                <div class="header-left">
+                    <h1>Estoque</h1>
+                    <div id="connectionStatus" class="connection-status offline">
+                        <span class="status-dot"></span>
                     </div>
                 </div>
+                <button onclick="toggleForm()" class="btn-new-order-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    Novo Produto
+                </button>
             </div>
 
-            <div class="card">
-                <div id="estoqueContainer"></div>
+            <!-- Filtro por Marca -->
+            <div class="card filter-section">
+                <h3>Filtrar por Marca</h3>
+                <div id="marcasFilter"></div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="search-bar-wrapper">
+                <div class="search-bar">
+                    <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                    <input type="text" id="search" placeholder="Buscar por código, marca ou descrição..." oninput="filterProducts()">
+                </div>
+            </div>
+
+            <!-- Table Card -->
+            <div class="card table-card">
+                <div id="estoqueContainer" style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Cód. Fornecedor</th>
+                                <th>NCM</th>
+                                <th>Marca</th>
+                                <th>Descrição</th>
+                                <th>Quantidade</th>
+                                <th>Valor Unit.</th>
+                                <th>Valor Total</th>
+                                <th style="text-align: center;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="estoqueTableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Botão Flutuante PDF (cinza) - acima do botão de cadastro -->
     <button onclick="generateInventoryPDF()" class="floating-pdf-btn" title="Gerar Relatório PDF">
-        📄
-    </button>
-
-    <!-- Botão Flutuante Cadastro (azul) -->
-    <button onclick="toggleForm()" class="floating-add-btn" title="Adicionar Produto">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
         </svg>
     </button>
 
+    <!-- Script para remover splash screen -->
     <script>
-        // Esconder splash após 3 segundos
         setTimeout(() => {
             const splash = document.getElementById('splashScreen');
-            if (splash) splash.style.display = 'none';
+            if (splash) {
+                splash.style.display = 'none';
+            }
         }, 3000);
     </script>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="script.js"></script>
