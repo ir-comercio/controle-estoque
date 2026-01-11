@@ -11,15 +11,12 @@ let marcasDisponiveis = new Set();
 let lastDataHash = '';
 let sessionToken = null;
 
-console.log('🚀 Sistema de Estoque iniciado');
+console.log('🚀 Estoque iniciado');
+console.log('📍 API URL:', API_URL);
 
 document.addEventListener('DOMContentLoaded', () => {
     verificarAutenticacao();
 });
-
-// =====================
-// AUTENTICAÇÃO
-// =====================
 
 function verificarAutenticacao() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -27,7 +24,7 @@ function verificarAutenticacao() {
 
     if (tokenFromUrl) {
         sessionToken = tokenFromUrl;
-        sessionStorage.setItem('estoqueSession', sessionToken);
+        sessionStorage.setItem('estoqueSession', tokenFromUrl);
         window.history.replaceState({}, document.title, window.location.pathname);
     } else {
         sessionToken = sessionStorage.getItem('estoqueSession');
@@ -43,32 +40,10 @@ function verificarAutenticacao() {
 
 function mostrarTelaAcessoNegado(mensagem = 'NÃO AUTORIZADO') {
     document.body.innerHTML = `
-        <div style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            text-align: center;
-            padding: 2rem;
-        ">
-            <h1 style="font-size: 2.2rem; margin-bottom: 1rem;">
-                ${mensagem}
-            </h1>
-            <p style="color: var(--text-secondary); margin-bottom: 2rem;">
-                Somente usuários autenticados podem acessar esta área.
-            </p>
-            <a href="${PORTAL_URL}" style="
-                display: inline-block;
-                background: var(--btn-register);
-                color: white;
-                padding: 14px 32px;
-                border-radius: 8px;
-                text-decoration: none;
-                font-weight: 600;
-            ">Ir para o Portal</a>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: var(--bg-primary); color: var(--text-primary); text-align: center; padding: 2rem;">
+            <h1 style="font-size: 2.2rem; margin-bottom: 1rem;">${mensagem}</h1>
+            <p style="color: var(--text-secondary); margin-bottom: 2rem;">Somente usuários autenticados podem acessar esta área.</p>
+            <a href="${PORTAL_URL}" style="display: inline-block; background: var(--btn-register); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Ir para o Portal</a>
         </div>
     `;
 }
@@ -79,21 +54,26 @@ function inicializarApp() {
     startPolling();
 }
 
-// =====================
-// CONEXÃO COM SERVIDOR
-// =====================
-
 async function checkServerStatus() {
     try {
+        const headers = {
+            'Accept': 'application/json'
+        };
+        
+        if (sessionToken) {
+            headers['X-Session-Token'] = sessionToken;
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
 
         const response = await fetch(`${API_URL}/estoque`, {
-            method: 'HEAD',
-            headers: { 'X-Session-Token': sessionToken },
+            method: 'GET',
+            headers: headers,
+            mode: 'cors',
             signal: controller.signal
         });
-        
+
         clearTimeout(timeoutId);
 
         if (response.status === 401) {
@@ -106,18 +86,14 @@ async function checkServerStatus() {
         isOnline = response.ok;
         
         if (wasOffline && isOnline) {
-            console.log('✅ Servidor ONLINE');
+            console.log('✅ SERVIDOR ONLINE');
             await loadProducts();
-        } else if (!wasOffline && !isOnline) {
-            console.log('❌ Servidor OFFLINE');
         }
         
         updateConnectionStatus();
         return isOnline;
     } catch (error) {
-        if (isOnline) {
-            console.log('❌ Erro de conexão:', error.message);
-        }
+        console.error('❌ Erro ao verificar servidor:', error.message);
         isOnline = false;
         updateConnectionStatus();
         return false;
@@ -135,8 +111,15 @@ async function loadProducts() {
     if (!isOnline) return;
 
     try {
-        const response = await fetch(`${API_URL}/estoque`, {
-            headers: { 'X-Session-Token': sessionToken }
+        const timestamp = new Date().getTime();
+        const response = await fetch(`${API_URL}/estoque?_t=${timestamp}`, {
+            method: 'GET',
+            headers: { 
+                'X-Session-Token': sessionToken,
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache'
+            },
+            mode: 'cors'
         });
 
         if (response.status === 401) {
@@ -148,22 +131,23 @@ async function loadProducts() {
         if (!response.ok) return;
 
         const data = await response.json();
-        const newHash = JSON.stringify(data.map(p => p.id));
+        const newDataHash = JSON.stringify(data.map(p => `${p.id}-${p.timestamp || ''}`));
 
-        if (newHash !== lastDataHash) {
-            produtos = data.map(item => ({ ...item, descricao: item.descricao.toUpperCase() }));
-            lastDataHash = newHash;
+        if (newDataHash !== lastDataHash) {
+            produtos = data;
+            lastDataHash = newDataHash;
             
-            console.log(`📦 ${data.length} produtos carregados`);
-            
-            requestAnimationFrame(() => {
-                atualizarMarcasDisponiveis();
-                renderMarcasFilter();
-                filterProducts();
+            marcasDisponiveis.clear();
+            produtos.forEach(p => {
+                if (p.marca) marcasDisponiveis.add(p.marca);
             });
+
+            renderMarcasFilter();
+            filterProducts();
+            console.log(`✅ ${produtos.length} produtos carregados`);
         }
     } catch (error) {
-        // Silencioso
+        console.error('❌ Erro ao carregar produtos:', error);
     }
 }
 
@@ -174,35 +158,20 @@ function startPolling() {
     }, 10000);
 }
 
-// =====================
-// MARCAS E FILTROS
-// =====================
-
-function atualizarMarcasDisponiveis() {
-    marcasDisponiveis.clear();
-    produtos.forEach(p => {
-        if (p.marca && p.marca.trim()) marcasDisponiveis.add(p.marca.trim());
-    });
-}
-
 function renderMarcasFilter() {
     const container = document.getElementById('marcasFilter');
     if (!container) return;
 
-    const marcasArray = Array.from(marcasDisponiveis).sort();
-    
-    const fragment = document.createDocumentFragment();
-    
-    ['TODAS', ...marcasArray].forEach(marca => {
-        const button = document.createElement('button');
-        button.className = `brand-button ${marca === marcaSelecionada ? 'active' : ''}`;
-        button.textContent = marca;
-        button.onclick = () => window.selecionarMarca(marca);
-        fragment.appendChild(button);
-    });
+    const marcasOrdenadas = ['TODAS', ...Array.from(marcasDisponiveis).sort()];
 
-    container.innerHTML = '';
-    container.appendChild(fragment);
+    container.innerHTML = marcasOrdenadas.map(marca => `
+        <button 
+            class="brand-button ${marca === marcaSelecionada ? 'active' : ''}" 
+            onclick="selecionarMarca('${marca}')"
+        >
+            ${marca}
+        </button>
+    `).join('');
 }
 
 window.selecionarMarca = function(marca) {
@@ -211,115 +180,119 @@ window.selecionarMarca = function(marca) {
     filterProducts();
 };
 
-function filterProducts() {
+window.filterProducts = function() {
     const searchTerm = document.getElementById('search').value.toLowerCase();
-    let filtered = produtos;
-
-    if (marcaSelecionada !== 'TODAS') {
-        filtered = filtered.filter(p => p.marca === marcaSelecionada);
-    }
-
-    if (searchTerm) {
-        filtered = filtered.filter(p => 
-            p.codigo.toString().includes(searchTerm) ||
-            p.codigo_fornecedor.toLowerCase().includes(searchTerm) ||
-            p.marca.toLowerCase().includes(searchTerm) ||
-            p.descricao.toLowerCase().includes(searchTerm)
-        );
-    }
-
-    filtered.sort((a, b) => {
-        const marcaCompare = a.marca.localeCompare(b.marca);
-        if (marcaCompare !== 0) return marcaCompare;
-        return a.codigo - b.codigo;
+    
+    const filtrados = produtos.filter(p => {
+        const matchMarca = marcaSelecionada === 'TODAS' || p.marca === marcaSelecionada;
+        const matchSearch = !searchTerm || 
+            p.codigo?.toString().includes(searchTerm) ||
+            p.codigo_fornecedor?.toLowerCase().includes(searchTerm) ||
+            p.ncm?.toLowerCase().includes(searchTerm) ||
+            p.marca?.toLowerCase().includes(searchTerm) ||
+            p.descricao?.toLowerCase().includes(searchTerm);
+        
+        return matchMarca && matchSearch;
     });
 
-    renderProducts(filtered);
-}
+    renderTable(filtrados);
+};
 
-// =====================
-// MODAIS
-// =====================
+function renderTable(produtosExibir) {
+    const tbody = document.getElementById('estoqueTableBody');
+    if (!tbody) return;
 
-function showConfirm(message, options = {}) {
-    return new Promise((resolve) => {
-        const { title = 'Confirmação', confirmText = 'Confirmar', cancelText = 'Cancelar', type = 'warning' } = options;
-
-        const modalHTML = `
-            <div class="modal-overlay" id="confirmModal">
-                <div class="modal-content compact">
-                    <div class="modal-header">
-                        <h3 class="modal-title">${title}</h3>
-                    </div>
-                    <p class="modal-message">${message}</p>
-                    <div class="modal-actions">
-                        <button class="secondary" id="modalCancelBtn">${cancelText}</button>
-                        <button class="${type === 'warning' ? 'danger' : 'success'}" id="modalConfirmBtn">${confirmText}</button>
-                    </div>
-                </div>
-            </div>
+    if (produtosExibir.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+                    <div style="font-size: 1.1rem;">Nenhum produto encontrado</div>
+                </td>
+            </tr>
         `;
+        return;
+    }
 
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-        const modal = document.getElementById('confirmModal');
-        const confirmBtn = document.getElementById('modalConfirmBtn');
-        const cancelBtn = document.getElementById('modalCancelBtn');
-
-        const closeModal = (result) => {
-            modal.style.animation = 'fadeOut 0.2s ease forwards';
-            setTimeout(() => { modal.remove(); resolve(result); }, 200);
-        };
-
-        confirmBtn.addEventListener('click', () => closeModal(true));
-        cancelBtn.addEventListener('click', () => closeModal(false));
-
-        if (!document.querySelector('#modalAnimations')) {
-            const style = document.createElement('style');
-            style.id = 'modalAnimations';
-            style.textContent = `@keyframes fadeOut { to { opacity: 0; } }`;
-            document.head.appendChild(style);
-        }
-    });
+    tbody.innerHTML = produtosExibir.map(p => {
+        const valorTotal = (p.quantidade * p.valor_unitario).toFixed(2);
+        return `
+            <tr>
+                <td><strong>${p.codigo || '-'}</strong></td>
+                <td>${p.codigo_fornecedor || '-'}</td>
+                <td>${p.ncm || '-'}</td>
+                <td><strong>${p.marca || '-'}</strong></td>
+                <td>${p.descricao || '-'}</td>
+                <td><strong>${p.quantidade || 0}</strong></td>
+                <td>R$ ${parseFloat(p.valor_unitario || 0).toFixed(2)}</td>
+                <td><strong>R$ ${valorTotal}</strong></td>
+                <td class="actions-cell">
+                    <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
+                    <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
+                    <button onclick="showMovimentacaoModal('${p.id}')" class="action-btn entrada">Movimentar</button>
+                    <button onclick="deleteProduct('${p.id}')" class="action-btn delete">Excluir</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
-function showAddProductModal() {
+// FUNÇÕES CRUD
+window.toggleForm = function() {
+    showFormModal();
+};
+
+function showFormModal(editId = null) {
+    const isEditing = editId !== null;
+    let produto = null;
+
+    if (isEditing) {
+        produto = produtos.find(p => String(p.id) === String(editId));
+        if (!produto) {
+            showMessage('Produto não encontrado', 'error');
+            return;
+        }
+    }
+
     const modalHTML = `
-        <div class="modal-overlay" id="addProductModal">
-            <div class="modal-content">
+        <div class="modal-overlay show">
+            <div class="modal-content large">
                 <div class="modal-header">
-                    <h3 class="modal-title">Novo Produto</h3>
-                    <button class="close-btn" onclick="closeAddProductModal()">✕</button>
+                    <h2 class="modal-title">${isEditing ? 'Editar Produto' : 'Novo Produto'}</h2>
+                    <button onclick="closeFormModal()" class="close-btn" style="background: none; border: none; font-size: 1.5rem; color: var(--text-secondary); cursor: pointer; padding: 0; margin: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">&times;</button>
                 </div>
-                <form id="addProductForm">
+                <form id="productForm" class="modal-form-content">
+                    <input type="hidden" id="editId" value="${editId || ''}">
                     <div class="form-grid">
                         <div class="form-group">
-                            <label>Código do Fornecedor (Modelo) *</label>
-                            <input type="text" id="codigoFornecedor" required placeholder="Ex: 3200">
+                            <label for="codigo_fornecedor">Código Fornecedor *</label>
+                            <input type="text" id="codigo_fornecedor" value="${produto?.codigo_fornecedor || ''}" required ${isEditing ? 'readonly style="background: var(--input-bg); opacity: 0.7;"' : ''}>
                         </div>
                         <div class="form-group">
-                            <label>NCM</label>
-                            <input type="text" id="ncm" placeholder="Ex: 12345678">
+                            <label for="ncm">NCM</label>
+                            <input type="text" id="ncm" value="${produto?.ncm || ''}">
                         </div>
                         <div class="form-group">
-                            <label>Marca *</label>
-                            <input type="text" id="marca" required placeholder="Ex: PLUZIE" style="text-transform: uppercase;">
+                            <label for="marca">Marca *</label>
+                            <input type="text" id="marca" value="${produto?.marca || ''}" required ${isEditing ? 'readonly style="background: var(--input-bg); opacity: 0.7;"' : ''}>
                         </div>
                         <div class="form-group">
-                            <label>Quantidade Inicial *</label>
+                            <label for="descricao">Descrição *</label>
+                            <input type="text" id="descricao" value="${produto?.descricao || ''}" required>
+                        </div>
+                        ${isEditing ? '' : `
+                        <div class="form-group">
+                            <label for="quantidade">Quantidade *</label>
                             <input type="number" id="quantidade" min="0" value="0" required>
                         </div>
+                        `}
                         <div class="form-group">
-                            <label>Valor Unitário (R$) *</label>
-                            <input type="number" id="valorUnitario" step="0.01" min="0" required>
-                        </div>
-                        <div class="form-group" style="grid-column: 1 / -1;">
-                            <label>Descrição *</label>
-                            <textarea id="descricao" required placeholder="Descrição completa do produto" rows="3"></textarea>
+                            <label for="valor_unitario">Valor Unitário *</label>
+                            <input type="number" id="valor_unitario" step="0.01" min="0" value="${produto?.valor_unitario || ''}" required>
                         </div>
                     </div>
                     <div class="modal-actions">
-                        <button type="button" class="secondary" onclick="closeAddProductModal()">Cancelar</button>
-                        <button type="submit" class="save">Cadastrar</button>
+                        <button type="button" class="secondary" onclick="closeFormModal()">Cancelar</button>
+                        <button type="submit" class="success">${isEditing ? 'Salvar' : 'Cadastrar'}</button>
                     </div>
                 </form>
             </div>
@@ -327,297 +300,44 @@ function showAddProductModal() {
     `;
 
     document.body.insertAdjacentHTML('beforeend', modalHTML);
-    const form = document.getElementById('addProductForm');
-    const descricaoField = document.getElementById('descricao');
-    const marcaField = document.getElementById('marca');
-
-    descricaoField.addEventListener('input', (e) => {
-        const start = e.target.selectionStart;
-        e.target.value = e.target.value.toUpperCase();
-        e.target.setSelectionRange(start, start);
-    });
-
-    marcaField.addEventListener('input', (e) => {
-        const start = e.target.selectionStart;
-        e.target.value = e.target.value.toUpperCase();
-        e.target.setSelectionRange(start, start);
-    });
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const codigoFornecedor = document.getElementById('codigoFornecedor').value.trim();
-        
-        if (produtos.some(p => p.codigo_fornecedor === codigoFornecedor)) {
-            showMessage('Código do fornecedor já cadastrado!', 'error');
-            return;
-        }
-
-        const formData = {
-            codigo_fornecedor: codigoFornecedor,
-            ncm: document.getElementById('ncm').value.trim() || null,
-            marca: document.getElementById('marca').value.trim().toUpperCase(),
-            descricao: document.getElementById('descricao').value.trim().toUpperCase(),
-            quantidade: parseInt(document.getElementById('quantidade').value),
-            valor_unitario: parseFloat(document.getElementById('valorUnitario').value)
-        };
-
-        closeAddProductModal();
-        await saveNewProduct(formData);
-    });
-
-    setTimeout(() => document.getElementById('codigoFornecedor').focus(), 100);
+    document.getElementById('productForm').addEventListener('submit', handleSubmit);
 }
 
-function closeAddProductModal() {
-    const modal = document.getElementById('addProductModal');
+function closeFormModal() {
+    const modal = document.querySelector('.modal-overlay');
     if (modal) {
-        modal.style.animation = 'fadeOut 0.2s ease forwards';
+        modal.style.animation = 'modalFadeOut 0.2s ease forwards';
         setTimeout(() => modal.remove(), 200);
     }
 }
 
-function showEditProductModal(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
+async function handleSubmit(e) {
+    e.preventDefault();
 
-    const modalHTML = `
-        <div class="modal-overlay" id="editProductModal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3 class="modal-title">Editar Produto</h3>
-                    <button class="close-btn" onclick="closeEditProductModal()">✕</button>
-                </div>
-                <form id="editProductForm">
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Código</label>
-                            <input type="text" value="${produto.codigo}" disabled style="background: var(--th-bg); color: white; font-weight: 700;">
-                        </div>
-                        <div class="form-group">
-                            <label>Marca</label>
-                            <input type="text" value="${produto.marca}" disabled style="background: var(--th-bg); color: white;">
-                        </div>
-                        <div class="form-group">
-                            <label>Código do Fornecedor (Modelo) *</label>
-                            <input type="text" id="editCodigoFornecedor" value="${produto.codigo_fornecedor}" required>
-                        </div>
-                        <div class="form-group">
-                            <label>NCM</label>
-                            <input type="text" id="editNcm" value="${produto.ncm || ''}" placeholder="Ex: 12345678">
-                        </div>
-                        <div class="form-group">
-                            <label>Valor Unitário (R$) *</label>
-                            <input type="number" id="editValorUnitario" value="${produto.valor_unitario}" step="0.01" min="0" required>
-                        </div>
-                        <div class="form-group" style="grid-column: 1 / -1;">
-                            <label>Descrição *</label>
-                            <textarea id="editDescricao" required rows="3">${produto.descricao}</textarea>
-                        </div>
-                    </div>
-                    <div class="modal-actions">
-                        <button type="button" class="secondary" onclick="closeEditProductModal()">Cancelar</button>
-                        <button type="submit" class="save">Salvar</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    `;
+    const editId = document.getElementById('editId').value;
+    const formData = {
+        codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
+        ncm: document.getElementById('ncm').value.trim() || null,
+        marca: document.getElementById('marca').value.trim().toUpperCase(),
+        descricao: document.getElementById('descricao').value.trim().toUpperCase(),
+        valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
+    };
 
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    const form = document.getElementById('editProductForm');
-    const descricaoField = document.getElementById('editDescricao');
-
-    descricaoField.addEventListener('input', (e) => {
-        const start = e.target.selectionStart;
-        e.target.value = e.target.value.toUpperCase();
-        e.target.setSelectionRange(start, start);
-    });
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const formData = {
-            codigo_fornecedor: document.getElementById('editCodigoFornecedor').value.trim(),
-            ncm: document.getElementById('editNcm').value.trim() || null,
-            descricao: document.getElementById('editDescricao').value.trim().toUpperCase(),
-            valor_unitario: parseFloat(document.getElementById('editValorUnitario').value)
-        };
-
-        closeEditProductModal();
-        await updateProduct(id, formData);
-    });
-}
-
-function closeEditProductModal() {
-    const modal = document.getElementById('editProductModal');
-    if (modal) {
-        modal.style.animation = 'fadeOut 0.2s ease forwards';
-        setTimeout(() => modal.remove(), 200);
+    if (!editId) {
+        formData.quantidade = parseInt(document.getElementById('quantidade').value);
     }
-}
 
-function showMovementModal(id, tipo) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
-
-    const tituloTipo = tipo === 'entrada' ? 'Entrada' : 'Saída';
-
-    const modalHTML = `
-        <div class="modal-overlay" id="movementModal">
-            <div class="modal-content compact">
-                <div class="modal-header">
-                    <h3 class="modal-title">${tituloTipo} de Estoque</h3>
-                    <button class="close-btn" onclick="closeMovementModal()">✕</button>
-                </div>
-                <div style="background: var(--input-bg); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
-                    <div class="info-line">
-                        <span class="info-label">Produto:</span>
-                        <span class="info-value">${produto.descricao}</span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Estoque Atual:</span>
-                        <span class="info-value"><strong>${produto.quantidade}</strong></span>
-                    </div>
-                </div>
-                <form id="movementForm">
-                    <div class="form-group">
-                        <label>Quantidade *</label>
-                        <input type="number" id="movementQuantity" min="1" required>
-                    </div>
-                    <div class="modal-actions">
-                        <button type="button" class="secondary" onclick="closeMovementModal()">Cancelar</button>
-                        <button type="submit" class="success">Confirmar</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    const form = document.getElementById('movementForm');
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const quantidade = parseInt(document.getElementById('movementQuantity').value);
-
-        if (tipo === 'saida' && quantidade > produto.quantidade) {
-            showMessage('Quantidade insuficiente em estoque!', 'error');
-            return;
-        }
-
-        closeMovementModal();
-        await saveMovement(id, tipo, quantidade);
-    });
-
-    setTimeout(() => document.getElementById('movementQuantity').focus(), 100);
-}
-
-function closeMovementModal() {
-    const modal = document.getElementById('movementModal');
-    if (modal) {
-        modal.style.animation = 'fadeOut 0.2s ease forwards';
-        setTimeout(() => modal.remove(), 200);
-    }
-}
-
-window.toggleForm = function() {
-    showAddProductModal();
-};
-
-window.editProduct = function(id) {
-    showEditProductModal(id);
-};
-
-window.entradaProduct = function(id) {
-    showMovementModal(id, 'entrada');
-};
-
-window.saidaProduct = function(id) {
-    showMovementModal(id, 'saida');
-};
-
-window.viewProduct = function(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
-
-    const modalHTML = `
-        <div class="modal-overlay" id="viewProductModal">
-            <div class="modal-content compact">
-                <div class="modal-header">
-                    <h3 class="modal-title">Detalhes do Produto</h3>
-                    <button class="close-btn" onclick="closeViewProductModal()">✕</button>
-                </div>
-                <div style="background: var(--input-bg); padding: 1rem; border-radius: 8px; overflow-wrap: break-word;">
-                    <div class="info-line">
-                        <span class="info-label">Código de Estoque:</span>
-                        <span class="info-value"><strong>${produto.codigo}</strong></span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Modelo:</span>
-                        <span class="info-value" style="word-break: break-all;">${produto.codigo_fornecedor}</span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">NCM:</span>
-                        <span class="info-value">${produto.ncm || '-'}</span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Marca:</span>
-                        <span class="info-value"><strong>${produto.marca}</strong></span>
-                    </div>
-                    <div class="info-line" style="align-items: flex-start;">
-                        <span class="info-label">Descrição:</span>
-                        <span class="info-value" style="word-break: break-all; text-align: right;">${produto.descricao}</span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Quantidade:</span>
-                        <span class="info-value"><strong>${produto.quantidade}</strong></span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Valor Unitário:</span>
-                        <span class="info-value">R$ ${formatCurrency(produto.valor_unitario)}</span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Valor Total:</span>
-                        <span class="info-value"><strong>R$ ${formatCurrency(produto.quantidade * produto.valor_unitario)}</strong></span>
-                    </div>
-                    <div class="info-line">
-                        <span class="info-label">Última Alteração:</span>
-                        <span class="info-value">${formatDateTime(produto.timestamp)}</span>
-                    </div>
-                </div>
-                <div class="modal-actions">
-                    <button class="secondary" onclick="closeViewProductModal()">Fechar</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-}
-
-window.closeViewProductModal = function() {
-    const modal = document.getElementById('viewProductModal');
-    if (modal) {
-        modal.style.animation = 'fadeOut 0.2s ease forwards';
-        setTimeout(() => modal.remove(), 200);
-    }
-};
-
-// =====================
-// OPERAÇÕES COM API
-// =====================
-
-async function saveNewProduct(formData) {
     if (!isOnline) {
-        showMessage('Servidor offline', 'error');
+        showMessage('Sistema offline', 'error');
         return;
     }
 
     try {
-        const response = await fetch(`${API_URL}/estoque`, {
-            method: 'POST',
+        const url = editId ? `${API_URL}/estoque/${editId}` : `${API_URL}/estoque`;
+        const method = editId ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method,
             headers: {
                 'Content-Type': 'application/json',
                 'X-Session-Token': sessionToken
@@ -633,41 +353,113 @@ async function saveNewProduct(formData) {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || 'Erro ao criar produto');
+            throw new Error(error.error || 'Erro ao salvar');
         }
 
-        const savedData = await response.json();
-        savedData.descricao = savedData.descricao.toUpperCase();
-
-        produtos.push(savedData);
-        lastDataHash = JSON.stringify(produtos.map(p => p.id));
-
-        requestAnimationFrame(() => {
-            atualizarMarcasDisponiveis();
-            renderMarcasFilter();
-            filterProducts();
-        });
-
-        showMessage('Produto cadastrado com sucesso!', 'success');
+        await loadProducts();
+        closeFormModal();
+        showMessage(`Produto ${editId ? 'atualizado' : 'cadastrado'} com sucesso`, 'success');
     } catch (error) {
-        showMessage(error.message || 'Erro ao criar produto', 'error');
+        console.error('Erro:', error);
+        showMessage(error.message, 'error');
     }
 }
 
-async function updateProduct(id, formData) {
+window.viewProduct = function(id) {
+    const produto = produtos.find(p => String(p.id) === String(id));
+    if (!produto) {
+        showMessage('Produto não encontrado', 'error');
+        return;
+    }
+
+    const modalHTML = `
+        <div class="modal-overlay show">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">Detalhes do Produto</h2>
+                    <button onclick="closeViewModal()" class="close-btn" style="background: none; border: none; font-size: 1.5rem; color: var(--text-secondary); cursor: pointer; padding: 0; margin: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">&times;</button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Código:</span>
+                        <span style="color: var(--text-primary);"><strong>${produto.codigo || '-'}</strong></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Cód. Fornecedor:</span>
+                        <span style="color: var(--text-primary);">${produto.codigo_fornecedor || '-'}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">NCM:</span>
+                        <span style="color: var(--text-primary);">${produto.ncm || '-'}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Marca:</span>
+                        <span style="color: var(--text-primary);"><strong>${produto.marca || '-'}</strong></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Descrição:</span>
+                        <span style="color: var(--text-primary);">${produto.descricao || '-'}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Quantidade:</span>
+                        <span style="color: var(--text-primary);"><strong>${produto.quantidade || 0}</strong></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Valor Unitário:</span>
+                        <span style="color: var(--text-primary);">R$ ${parseFloat(produto.valor_unitario || 0).toFixed(2)}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 0.75rem 0;">
+                        <span style="font-weight: 600; color: var(--text-secondary);">Valor Total:</span>
+                        <span style="color: var(--text-primary);"><strong>R$ ${(produto.quantidade * produto.valor_unitario).toFixed(2)}</strong></span>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button onclick="closeViewModal()" class="secondary">Fechar</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+};
+
+function closeViewModal() {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) {
+        modal.style.animation = 'modalFadeOut 0.2s ease forwards';
+        setTimeout(() => modal.remove(), 200);
+    }
+}
+
+window.editProduct = function(id) {
+    showFormModal(id);
+};
+
+window.deleteProduct = async function(id) {
+    const produto = produtos.find(p => String(p.id) === String(id));
+    if (!produto) {
+        showMessage('Produto não encontrado', 'error');
+        return;
+    }
+
+    const confirmado = await showConfirm(
+        `Deseja realmente excluir o produto "${produto.descricao}"?`,
+        'Excluir Produto'
+    );
+
+    if (!confirmado) return;
+
     if (!isOnline) {
-        showMessage('Servidor offline', 'error');
+        showMessage('Sistema offline', 'error');
         return;
     }
 
     try {
         const response = await fetch(`${API_URL}/estoque/${id}`, {
-            method: 'PUT',
+            method: 'DELETE',
             headers: {
-                'Content-Type': 'application/json',
                 'X-Session-Token': sessionToken
-            },
-            body: JSON.stringify(formData)
+            }
         });
 
         if (response.status === 401) {
@@ -676,31 +468,69 @@ async function updateProduct(id, formData) {
             return;
         }
 
-        if (!response.ok) throw new Error('Erro ao atualizar produto');
+        if (!response.ok) throw new Error('Erro ao excluir');
 
-        const savedData = await response.json();
-        savedData.descricao = savedData.descricao.toUpperCase();
-
-        const index = produtos.findIndex(p => p.id === id);
-        if (index !== -1) produtos[index] = savedData;
-
-        lastDataHash = JSON.stringify(produtos.map(p => p.id));
-
-        requestAnimationFrame(() => {
-            atualizarMarcasDisponiveis();
-            renderMarcasFilter();
-            filterProducts();
-        });
-
-        showMessage('Produto atualizado com sucesso!', 'success');
+        await loadProducts();
+        showMessage('Produto excluído com sucesso', 'success');
     } catch (error) {
-        showMessage('Erro ao atualizar produto', 'error');
+        console.error('Erro:', error);
+        showMessage('Erro ao excluir produto', 'error');
+    }
+};
+
+// MOVIMENTAÇÃO DE ESTOQUE
+window.showMovimentacaoModal = function(id) {
+    const produto = produtos.find(p => String(p.id) === String(id));
+    if (!produto) {
+        showMessage('Produto não encontrado', 'error');
+        return;
+    }
+
+    const modalHTML = `
+        <div class="modal-overlay show">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">Movimentar Estoque</h2>
+                    <button onclick="closeMovimentacaoModal()" class="close-btn" style="background: none; border: none; font-size: 1.5rem; color: var(--text-secondary); cursor: pointer; padding: 0; margin: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">&times;</button>
+                </div>
+                <div style="margin: 1.5rem 0;">
+                    <p style="color: var(--text-primary); margin-bottom: 1rem;"><strong>Produto:</strong> ${produto.descricao}</p>
+                    <p style="color: var(--text-primary); margin-bottom: 1.5rem;"><strong>Estoque atual:</strong> ${produto.quantidade}</p>
+                    <div class="form-group">
+                        <label for="quantidade_mov">Quantidade</label>
+                        <input type="number" id="quantidade_mov" min="1" value="1" required>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button onclick="closeMovimentacaoModal()" class="secondary">Cancelar</button>
+                    <button onclick="movimentarEstoque('${id}', 'entrada')" class="action-btn entrada">Entrada</button>
+                    <button onclick="movimentarEstoque('${id}', 'saida')" class="action-btn saida">Saída</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+};
+
+function closeMovimentacaoModal() {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) {
+        modal.style.animation = 'modalFadeOut 0.2s ease forwards';
+        setTimeout(() => modal.remove(), 200);
     }
 }
 
-async function saveMovement(id, tipo, quantidade) {
+window.movimentarEstoque = async function(id, tipo) {
+    const quantidade = parseInt(document.getElementById('quantidade_mov').value);
+
+    if (!quantidade || quantidade <= 0) {
+        showMessage('Quantidade inválida', 'error');
+        return;
+    }
+
     if (!isOnline) {
-        showMessage('Servidor offline', 'error');
+        showMessage('Sistema offline', 'error');
         return;
     }
 
@@ -725,288 +555,109 @@ async function saveMovement(id, tipo, quantidade) {
             throw new Error(error.error || 'Erro ao movimentar');
         }
 
-        const savedData = await response.json();
-        savedData.descricao = savedData.descricao.toUpperCase();
-
-        const index = produtos.findIndex(p => p.id === id);
-        if (index !== -1) produtos[index] = savedData;
-
-        lastDataHash = JSON.stringify(produtos.map(p => p.id));
-        filterProducts();
-
-        const tipoMsg = tipo === 'entrada' ? 'Entrada' : 'Saída';
-        showMessage(`${tipoMsg} registrada com sucesso!`, 'success');
+        await loadProducts();
+        closeMovimentacaoModal();
+        showMessage(`${tipo === 'entrada' ? 'Entrada' : 'Saída'} registrada com sucesso`, 'success');
     } catch (error) {
-        showMessage(error.message || 'Erro ao movimentar', 'error');
-    }
-}
-
-window.deleteProduct = async function(id) {
-    const confirmed = await showConfirm('Tem certeza que deseja excluir este produto?', {
-        title: 'Excluir Produto',
-        confirmText: 'Excluir',
-        cancelText: 'Cancelar',
-        type: 'warning'
-    });
-
-    if (!confirmed) return;
-
-    if (!isOnline) {
-        showMessage('Servidor offline', 'error');
-        return;
-    }
-
-    try {
-        const response = await fetch(`${API_URL}/estoque/${id}`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': sessionToken }
-        });
-
-        if (response.status === 401) {
-            sessionStorage.removeItem('estoqueSession');
-            mostrarTelaAcessoNegado('Sua sessão expirou');
-            return;
-        }
-
-        if (!response.ok) throw new Error('Erro ao deletar');
-
-        produtos = produtos.filter(p => p.id !== id);
-        lastDataHash = JSON.stringify(produtos.map(p => p.id));
-
-        requestAnimationFrame(() => {
-            atualizarMarcasDisponiveis();
-            renderMarcasFilter();
-            filterProducts();
-        });
-
-        showMessage('Produto excluído!', 'success');
-    } catch (error) {
-        showMessage('Erro ao excluir', 'error');
+        console.error('Erro:', error);
+        showMessage(error.message, 'error');
     }
 };
 
-// =====================
-// RENDERIZAÇÃO
-// =====================
-
-function renderProducts(produtosToRender) {
-    const container = document.getElementById('estoqueContainer');
-    
-    if (!produtosToRender || produtosToRender.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);">Nenhum produto encontrado</div>';
-        return;
-    }
-
-    const rows = produtosToRender.map(p => `
-        <tr>
-            <td><strong>${p.codigo}</strong></td>
-            <td>${p.codigo_fornecedor}</td>
-            <td><strong>${p.marca}</strong></td>
-            <td>${p.descricao}</td>
-            <td style="text-align: center;"><strong>${p.quantidade}</strong></td>
-            <td style="text-align: right;">R$ ${formatCurrency(p.valor_unitario)}</td>
-            <td style="color: var(--text-secondary); font-size: 0.85rem;">${formatDateTime(p.timestamp)}</td>
-            <td>
-                <div class="actions-cell">
-                    <button onclick="window.viewProduct('${p.id}')" class="action-btn view">Ver</button>
-                    <button onclick="window.editProduct('${p.id}')" class="action-btn edit">Editar</button>
-                    <button onclick="window.entradaProduct('${p.id}')" class="action-btn entrada">Entrada</button>
-                    <button onclick="window.saidaProduct('${p.id}')" class="action-btn saida">Saída</button>
-                </div>
-            </td>
-        </tr>
-    `).join('');
-
-    const totalValue = produtosToRender.reduce((sum, p) => sum + (p.quantidade * p.valor_unitario), 0);
-
-    container.innerHTML = `
-        <div style="overflow-x: auto;">
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width: 80px;">Código</th>
-                        <th style="width: 120px;">Modelo</th>
-                        <th style="width: 120px;">Marca</th>
-                        <th>Descrição</th>
-                        <th style="width: 100px; text-align: center;">Quantidade</th>
-                        <th style="width: 120px; text-align: right;">Vlr. Un.</th>
-                        <th style="width: 120px;">Alteração</th>
-                        <th style="width: 320px;">Ações</th>
-                    </tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
-        </div>
-        <div style="margin-top: 1.5rem; padding: 1rem; background: var(--input-bg); border-radius: 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: 600; color: var(--text-secondary);">VALOR TOTAL EM ESTOQUE:</span>
-                <span style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">R$ ${formatCurrency(totalValue)}</span>
-            </div>
-        </div>
-    `;
-}
-
-// =====================
-// RELATÓRIO PDF
-// =====================
-
-function generateInventoryPDF() {
-    if (produtos.length === 0) {
-        showMessage('Não há produtos para gerar o relatório!', 'error');
+// GERAÇÃO DE PDF
+window.generateInventoryPDF = function() {
+    if (!window.jspdf) {
+        showMessage('Biblioteca PDF não carregada', 'error');
         return;
     }
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
 
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Inventário Geral de Estoque', 105, 20, { align: 'center' });
+    // Título
+    doc.setFontSize(18);
+    doc.text('Relatório de Estoque', 14, 20);
 
+    // Data
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const now = new Date();
-    doc.text(`Relatório emitido em ${formatDateTime(now.toISOString())}`, 105, 28, { align: 'center' });
+    doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, 14, 28);
 
-    const groupedByBrand = {};
-    let filteredProducts = produtos;
+    // Tabela
+    const tableData = produtos.map(p => [
+        p.codigo || '-',
+        p.codigo_fornecedor || '-',
+        p.marca || '-',
+        p.descricao || '-',
+        p.quantidade || 0,
+        `R$ ${parseFloat(p.valor_unitario || 0).toFixed(2)}`,
+        `R$ ${(p.quantidade * p.valor_unitario).toFixed(2)}`
+    ]);
 
-    if (marcaSelecionada !== 'TODAS') {
-        filteredProducts = filteredProducts.filter(p => p.marca === marcaSelecionada);
-    }
-
-    filteredProducts.forEach(product => {
-        if (!groupedByBrand[product.marca]) {
-            groupedByBrand[product.marca] = [];
-        }
-        groupedByBrand[product.marca].push(product);
+    doc.autoTable({
+        head: [['Código', 'Cód. Forn.', 'Marca', 'Descrição', 'Qtd', 'Valor Unit.', 'Total']],
+        body: tableData,
+        startY: 35,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [107, 114, 128] }
     });
 
-    let startY = 45;
-    let grandTotal = 0;
+    // Totais
+    const valorTotal = produtos.reduce((sum, p) => sum + (p.quantidade * p.valor_unitario), 0);
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(10);
+    doc.text(`Total de Produtos: ${produtos.length}`, 14, finalY);
+    doc.text(`Valor Total do Estoque: R$ ${valorTotal.toFixed(2)}`, 14, finalY + 7);
 
-    Object.keys(groupedByBrand).sort().forEach((marca) => {
-        const productsInGroup = groupedByBrand[marca];
-        
-        if (startY > 250) {
-            doc.addPage();
-            startY = 20;
-        }
+    doc.save(`estoque_${new Date().toISOString().split('T')[0]}.pdf`);
+    showMessage('PDF gerado com sucesso', 'success');
+};
 
-        doc.setFontSize(12);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`${marca}`, 14, startY);
-        startY += 7;
-
-        const tableData = productsInGroup.map(p => [
-            String(p.codigo),
-            p.codigo_fornecedor,
-            p.descricao.substring(0, 50),
-            p.quantidade.toString(),
-            `R$ ${formatCurrency(p.valor_unitario)}`,
-            `R$ ${formatCurrency(p.quantidade * p.valor_unitario)}`
-        ]);
-
-        const groupTotal = productsInGroup.reduce((sum, p) => sum + (p.quantidade * p.valor_unitario), 0);
-        grandTotal += groupTotal;
-
-        doc.autoTable({
-            startY: startY,
-            head: [['Código', 'Cód. F.', 'DESCRIÇÃO', 'QTD', 'UND (R$)', 'TOTAL (R$)']],
-            body: tableData,
-            foot: [[
-                { content: `Registros listados: ${productsInGroup.length}`, colSpan: 3, styles: { halign: 'left', fontStyle: 'bold' } },
-                { content: '', colSpan: 2, styles: { halign: 'right' } },
-                { content: `R$ ${formatCurrency(groupTotal)}`, styles: { halign: 'right', fontStyle: 'bold' } }
-            ]],
-            theme: 'grid',
-            styles: {
-                fontSize: 9,
-                cellPadding: 3
-            },
-            headStyles: {
-                fillColor: [74, 74, 74],
-                textColor: 255,
-                fontStyle: 'bold',
-                halign: 'center'
-            },
-            footStyles: {
-                fillColor: [240, 240, 240],
-                textColor: 0,
-                fontStyle: 'bold'
-            },
-            columnStyles: {
-                0: { halign: 'center', cellWidth: 20 },
-                1: { halign: 'center', cellWidth: 28 },
-                2: { halign: 'left', cellWidth: 68 },
-                3: { halign: 'center', cellWidth: 15 },
-                4: { halign: 'right', cellWidth: 25 },
-                5: { halign: 'right', cellWidth: 34 }
-            },
-            margin: { left: 14, right: 14 }
-        });
-
-        startY = doc.lastAutoTable.finalY + 15;
-    });
-
-    if (startY > 260) {
-        doc.addPage();
-        startY = 20;
-    }
-
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.setDrawColor(204, 112, 0);
-    doc.setLineWidth(0.5);
-    doc.line(14, startY, 196, startY);
-    startY += 8;
-    doc.text(`VALOR TOTAL EM ESTOQUE: R$ ${formatCurrency(grandTotal)}`, 105, startY, { align: 'center' });
-
-    const dateStr = formatDate(now.toISOString()).replace(/\//g, '-');
-    doc.save(`Inventario_Estoque_${dateStr}.pdf`);
-    showMessage('Relatório gerado com sucesso!', 'success');
-}
-
-// =====================
 // UTILITÁRIOS
-// =====================
-
-function formatCurrency(value) {
-    return value.toLocaleString('pt-BR', { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
-    });
-}
-
-function formatDateTime(isoString) {
-    if (!isoString) return 'Sem data';
-    const date = new Date(isoString);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
-}
-
-function formatDate(isoString) {
-    const date = new Date(isoString);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
-}
-
 function showMessage(message, type) {
     const oldMessages = document.querySelectorAll('.floating-message');
     oldMessages.forEach(msg => msg.remove());
-    
+
     const messageDiv = document.createElement('div');
     messageDiv.className = `floating-message ${type}`;
     messageDiv.textContent = message;
-    
+
     document.body.appendChild(messageDiv);
-    
+
     setTimeout(() => {
         messageDiv.style.animation = 'slideOut 0.3s ease forwards';
         setTimeout(() => messageDiv.remove(), 300);
     }, 3000);
+}
+
+function showConfirm(message, title = 'Confirmação') {
+    return new Promise((resolve) => {
+        const modalHTML = `
+            <div class="modal-overlay show">
+                <div class="modal-content compact">
+                    <div class="modal-header">
+                        <h3 class="modal-title">${title}</h3>
+                    </div>
+                    <p class="modal-message">${message}</p>
+                    <div class="modal-actions">
+                        <button class="secondary" onclick="closeConfirmModal(false)">Cancelar</button>
+                        <button class="danger" onclick="closeConfirmModal(true)">Confirmar</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+        window.closeConfirmModal = function(result) {
+            const modal = document.querySelector('.modal-overlay');
+            if (modal) {
+                modal.style.animation = 'modalFadeOut 0.2s ease forwards';
+                setTimeout(() => {
+                    modal.remove();
+                    delete window.closeConfirmModal;
+                    resolve(result);
+                }, 200);
+            }
+        };
+    });
 }
