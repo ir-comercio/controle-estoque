@@ -303,6 +303,35 @@ h3 {
     color: var(--text-secondary);
 }
 
+/* BOTÃO DE SINCRONIZAÇÃO */
+.sync-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.sync-btn:hover {
+    background: var(--input-bg);
+    color: var(--primary);
+}
+
+.sync-btn svg {
+    transition: transform 0.3s ease;
+}
+
+.sync-btn:active svg {
+    transform: rotate(180deg);
+}
+
 /* TABLE */
 table {
     width: 100%;
