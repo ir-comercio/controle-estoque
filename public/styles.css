@@ -227,7 +227,7 @@ h3 {
     margin-bottom: 1rem;
 }
 
-#marcasFilter {
+#gruposFilter {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -377,6 +377,10 @@ tbody tr:hover {
     margin-bottom: 1.5rem;
 }
 
+.form-grid-fornecedor {
+    grid-template-columns: repeat(2, 1fr);
+}
+
 .form-group {
     margin-bottom: 1rem;
 }
@@ -409,6 +413,39 @@ textarea {
 input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--primary);
+}
+
+.input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.input-with-icon select {
+    flex: 1;
+}
+
+.icon-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+    padding: 0;
+    margin: 0;
+}
+
+.icon-btn:hover {
+    background: #B36000;
+    transform: scale(1.05);
 }
 
 button {
@@ -570,6 +607,10 @@ button.small {
     max-width: 500px;
 }
 
+.modal-content.modal-large {
+    max-width: 1200px;
+}
+
 @keyframes scaleIn {
     to {
         transform: scale(1);
@@ -697,6 +738,59 @@ button.small {
     color: var(--text-primary);
 }
 
+/* HISTÓRICO */
+.history-content {
+    overflow-x: auto;
+    margin-bottom: 1.5rem;
+}
+
+.history-table {
+    width: 100%;
+    min-width: 600px;
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 1rem 0;
+}
+
+.pagination-btn {
+    background: var(--input-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    padding: 0;
+    margin: 0;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    transform: none;
+}
+
+.pagination-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+#pageInfo {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
 .hidden {
     display: none !important;
 }
@@ -754,6 +848,10 @@ button.small {
     .form-grid {
         grid-template-columns: 1fr;
     }
+
+    .form-grid-fornecedor {
+        grid-template-columns: 1fr;
+    }
     
     .modal-content {
         padding: 1.5rem;
@@ -772,7 +870,7 @@ button.small {
         min-width: auto;
     }
     
-    #marcasFilter {
+    #gruposFilter {
         gap: 0.4rem;
     }
     
