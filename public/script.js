@@ -5,6 +5,7 @@ const API_URL = window.location.hostname === 'localhost' || window.location.host
 
 let produtos = [];
 let grupos = [];
+let quantidadesAnteriores = {};
 let isOnline = false;
 let grupoSelecionado = 'TODOS';
 let lastDataHash = '';
