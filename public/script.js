@@ -501,7 +501,7 @@ window.saveProduct = async function(event) {
     }
 };
 
-// MODAL DE VISUALIZAÇÃO
+// MODAL DE EDIÇÃO
 window.editProduct = async function(id) {
     const produto = produtos.find(p => p.id === id);
     if (!produto) return;
@@ -510,25 +510,32 @@ window.editProduct = async function(id) {
     formCancelado = false;
     document.getElementById('formTitle').textContent = 'Editar Produto';
     
-    // Campos editáveis
+    // Preencher campos editáveis
     document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
     document.getElementById('ncm').value = produto.ncm || '';
     document.getElementById('descricao').value = produto.descricao;
-    document.getElementById('unidade').value = produto.unidade || 'UN';
     
     // Valor unitário EDITÁVEL
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
     document.getElementById('valor_unitario').disabled = false;
     
-    // Campos NÃO editáveis
+    // Preencher campos ocultos (para não perder dados)
     document.getElementById('marca').value = produto.marca;
-    document.getElementById('marca').disabled = true;
-    
+    document.getElementById('unidade').value = produto.unidade || 'UN';
     document.getElementById('quantidade').value = produto.quantidade;
-    document.getElementById('quantidade').disabled = true;
-    
     document.getElementById('grupo').value = produto.grupo_id || '';
-    document.getElementById('grupo').disabled = true;
+    
+    // Remover required dos campos ocultos
+    document.getElementById('marca').required = false;
+    document.getElementById('grupo').required = false;
+    document.getElementById('unidade').required = false;
+    document.getElementById('quantidade').required = false;
+    
+    // OCULTAR campos não editáveis
+    document.getElementById('marcaField').style.display = 'none';
+    document.getElementById('grupoField').style.display = 'none';
+    document.getElementById('unidadeField').style.display = 'none';
+    document.getElementById('quantidadeField').style.display = 'none';
     
     // Ocultar botão de adicionar grupo
     const btnAddGrupo = document.getElementById('btnAddGrupo');
