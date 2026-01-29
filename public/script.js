@@ -23,19 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     verificarAutenticacao();
 });
 
-// Função de formatação monetária brasileira
-function formatarMoeda(valor) {
-    if (valor === null || valor === undefined || isNaN(valor)) {
-        return 'R$ 0,00';
-    }
-    return valor.toLocaleString('pt-BR', {
-        style: 'currency',
-        currency: 'BRL',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    });
-}
-
 function verificarAutenticacao() {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('sessionToken');
@@ -307,7 +294,6 @@ window.sincronizarManual = async function() {
 
     try {
         await loadProducts();
-        await loadGrupos(); // 🎯 ADICIONAR SINCRONIZAÇÃO DE GRUPOS
         showMessage('Dados atualizados', 'success');
     } finally {
         if (btn) {
@@ -344,29 +330,30 @@ function renderTable(products) {
     if (!tbody) return;
 
     if (products.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 2rem;">Nenhum produto encontrado</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 2rem;">Nenhum produto encontrado</td></tr>';
         return;
     }
 
-tbody.innerHTML = products.map(p => `
-    <tr>
-        <td><strong>${p.codigo}</strong></td>
-        <td>${p.marca}</td>
-        <td>${p.codigo_fornecedor}</td>
-        <td>${p.descricao}</td>
-        <td>${p.unidade || 'UN'}</td>
-        <td><strong>${p.quantidade}</strong></td>
-        <td>${formatarMoeda(parseFloat(p.valor_unitario))}</td>
-        <td><strong>${formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))}</strong></td>
-        <td class="actions-cell">
-            <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
-            <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
-            <button onclick="openEntradaModal('${p.id}')" class="action-btn success">Entrada</button>
-            <button onclick="openSaidaModal('${p.id}')" class="action-btn delete">Saída</button>
-        </td>
-    </tr>
-`).join('');
-} // ✅ ADICIONAR ESTA CHAVE DE FECHAMENTO
+    tbody.innerHTML = products.map(p => `
+        <tr>
+            <td><strong>${p.codigo}</strong></td>
+            <td>${p.marca}</td>
+            <td>${p.codigo_fornecedor}</td>
+            <td>${p.ncm || '-'}</td>
+            <td>${p.descricao}</td>
+            <td>${p.unidade || 'UN'}</td>
+            <td><strong>${p.quantidade}</strong></td>
+            <td>R$ ${parseFloat(p.valor_unitario).toFixed(2)}</td>
+            <td><strong>R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}</strong></td>
+            <td class="actions-cell">
+                <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
+                <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
+                <button onclick="openEntradaModal('${p.id}')" class="action-btn success">Entrada</button>
+                <button onclick="openSaidaModal('${p.id}')" class="action-btn delete">Saída</button>
+            </td>
+        </tr>
+    `).join('');
+}
 
 // MODAL DE ABAS
 let editingProductId = null;
@@ -386,31 +373,8 @@ window.toggleForm = function() {
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
     
-    // Reabilitar todos os campos
-    document.getElementById('marca').disabled = false;
-    document.getElementById('marca').required = true;
-    document.getElementById('quantidade').disabled = false;
-    document.getElementById('valor_unitario').disabled = false;
-    document.getElementById('grupo').disabled = false;
-    
-    // Mostrar TODOS os campos
-    document.getElementById('marcaField').style.display = 'block';
-    document.getElementById('grupoField').style.display = 'block';
-    document.getElementById('unidadeField').style.display = 'block';
-    document.getElementById('quantidadeField').style.display = 'block';
-    
-    // Reativar required nos campos
-    document.getElementById('grupo').required = true;
-    document.getElementById('unidade').required = true;
-    document.getElementById('quantidade').required = true;
-    
-    // Mostrar botão de adicionar grupo
-    const btnAddGrupo = document.getElementById('btnAddGrupo');
-    if (btnAddGrupo) {
-        btnAddGrupo.style.display = 'flex';
-    }
-    
     switchTab('fornecedor');
+    
     document.getElementById('formModal').classList.add('show');
 };
 
@@ -430,38 +394,45 @@ window.closeFormModal = function(cancelado = false) {
     formCancelado = false;
 };
 
+window.editProduct = async function(id) {
+    const produto = produtos.find(p => p.id === id);
+    if (!produto) return;
+
+    editingProductId = id;
+    formCancelado = false;
+    document.getElementById('formTitle').textContent = 'Editar Produto';
+    document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
+    document.getElementById('ncm').value = produto.ncm || '';
+    document.getElementById('marca').value = produto.marca;
+    document.getElementById('descricao').value = produto.descricao;
+    document.getElementById('unidade').value = produto.unidade || 'UN';
+    document.getElementById('quantidade').value = produto.quantidade;
+    document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
+    document.getElementById('grupo').value = produto.grupo_id || '';
+    
+    switchTab('fornecedor');
+    
+    document.getElementById('formModal').classList.add('show');
+};
+
 window.saveProduct = async function(event) {
     event.preventDefault();
 
-    let formData;
-    
-    if (editingProductId) {
-        // MODO EDIÇÃO: apenas campos editáveis
-        formData = {
-            codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
-            ncm: document.getElementById('ncm').value.trim(),
-            descricao: document.getElementById('descricao').value.trim(),
-            unidade: document.getElementById('unidade').value,
-            valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
-        };
-    } else {
-        // MODO CRIAÇÃO: todos os campos
-        formData = {
-            codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
-            ncm: document.getElementById('ncm').value.trim(),
-            marca: document.getElementById('marca').value.trim(),
-            descricao: document.getElementById('descricao').value.trim(),
-            unidade: document.getElementById('unidade').value,
-            quantidade: parseInt(document.getElementById('quantidade').value),
-            valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
-            grupo_id: document.getElementById('grupo').value
-        };
+    const formData = {
+        codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
+        ncm: document.getElementById('ncm').value.trim(),
+        marca: document.getElementById('marca').value.trim(),
+        descricao: document.getElementById('descricao').value.trim(),
+        unidade: document.getElementById('unidade').value,
+        quantidade: parseInt(document.getElementById('quantidade').value),
+        valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
+        grupo_id: document.getElementById('grupo').value
+    };
 
-        if (!formData.grupo_id) {
-            showMessage('Selecione um grupo', 'error');
-            switchTab('produto');
-            return;
-        }
+    if (!formData.grupo_id) {
+        showMessage('Selecione um grupo', 'error');
+        switchTab('produto');
+        return;
     }
 
     try {
@@ -499,52 +470,6 @@ window.saveProduct = async function(event) {
     } catch (error) {
         showMessage(error.message, 'error');
     }
-};
-
-// MODAL DE EDIÇÃO
-window.editProduct = async function(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
-
-    editingProductId = id;
-    formCancelado = false;
-    document.getElementById('formTitle').textContent = 'Editar Produto';
-    
-    // Preencher campos editáveis
-    document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
-    document.getElementById('ncm').value = produto.ncm || '';
-    document.getElementById('descricao').value = produto.descricao;
-    
-    // Valor unitário EDITÁVEL
-    document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
-    document.getElementById('valor_unitario').disabled = false;
-    
-    // Preencher campos ocultos (para não perder dados)
-    document.getElementById('marca').value = produto.marca;
-    document.getElementById('unidade').value = produto.unidade || 'UN';
-    document.getElementById('quantidade').value = produto.quantidade;
-    document.getElementById('grupo').value = produto.grupo_id || '';
-    
-    // Remover required dos campos ocultos
-    document.getElementById('marca').required = false;
-    document.getElementById('grupo').required = false;
-    document.getElementById('unidade').required = false;
-    document.getElementById('quantidade').required = false;
-    
-    // OCULTAR campos não editáveis
-    document.getElementById('marcaField').style.display = 'none';
-    document.getElementById('grupoField').style.display = 'none';
-    document.getElementById('unidadeField').style.display = 'none';
-    document.getElementById('quantidadeField').style.display = 'none';
-    
-    // Ocultar botão de adicionar grupo
-    const btnAddGrupo = document.getElementById('btnAddGrupo');
-    if (btnAddGrupo) {
-        btnAddGrupo.style.display = 'none';
-    }
-    
-    switchTab('fornecedor');
-    document.getElementById('formModal').classList.add('show');
 };
 
 // MODAL DE VISUALIZAÇÃO
@@ -589,11 +514,11 @@ window.viewProduct = function(id) {
         </div>
         <div class="view-detail-item">
             <div class="view-detail-label">Valor Unitário</div>
-            <div class="view-detail-value">${formatarMoeda(parseFloat(produto.valor_unitario))}</div>
+            <div class="view-detail-value">R$ ${parseFloat(produto.valor_unitario).toFixed(2)}</div>
         </div>
         <div class="view-detail-item">
             <div class="view-detail-label">Valor Total</div>
-            <div class="view-detail-value">${formatarMoeda(produto.quantidade * parseFloat(produto.valor_unitario))}</div>
+            <div class="view-detail-value">R$ ${(produto.quantidade * parseFloat(produto.valor_unitario)).toFixed(2)}</div>
         </div>
     `;
 
@@ -892,8 +817,8 @@ window.generateInventoryPDF = function() {
             p.descricao,
             p.unidade || 'UN',
             p.quantidade.toString(),
-formatarMoeda(parseFloat(p.valor_unitario)),
-formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))
+            `R$ ${parseFloat(p.valor_unitario).toFixed(2)}`,
+            `R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}`
         ]);
 
         // Adicionar tabela
@@ -954,17 +879,15 @@ formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))
         startY += 6;
         doc.text(`Quantidade Total: ${quantidadeGrupo}`, 14, startY);
         startY += 6;
-        doc.text(`Valor Total: ${formatarMoeda(valorGrupo)}`, 14, startY);
+        doc.text(`Valor Total: R$ ${valorGrupo.toFixed(2)}`, 14, startY);
         startY += 12;
     });
 
-// Totais gerais na última página
-if (startY > 160) {
-    doc.addPage();
-    startY = 15;
-} else {
-    startY += 30; // 🎯 ADICIONAR ESPAÇAMENTO EXTRA (ajuste o valor conforme necessário)
-}
+    // Totais gerais na última página
+    if (startY > 160) {
+        doc.addPage();
+        startY = 15;
+    }
 
     doc.setFontSize(14);
     doc.setFont(undefined, 'bold');
@@ -972,11 +895,13 @@ if (startY > 160) {
     doc.text('TOTAIS GERAIS:', 14, startY);
     startY += 10;
 
-doc.setFontSize(11);
-doc.setFont(undefined, 'normal');
-doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
-startY += 7;
-doc.text(`Valor Total em Estoque: ${formatarMoeda(valorTotalGeral)}`, 14, startY); // ✅ ÚNICO
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
+    startY += 7;
+    doc.text(`Quantidade Total: ${quantidadeTotalGeral}`, 14, startY);
+    startY += 7;
+    doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
 
     // Salvar PDF
     doc.save(`Relatorio_Estoque_${new Date().toISOString().split('T')[0]}.pdf`);
