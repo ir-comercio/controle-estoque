@@ -331,30 +331,28 @@ function renderTable(products) {
     if (!tbody) return;
 
     if (products.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 2rem;">Nenhum produto encontrado</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 2rem;">Nenhum produto encontrado</td></tr>';
         return;
     }
 
-    tbody.innerHTML = products.map(p => `
-        <tr>
-            <td><strong>${p.codigo}</strong></td>
-            <td>${p.marca}</td>
-            <td>${p.codigo_fornecedor}</td>
-            <td>${p.ncm || '-'}</td>
-            <td>${p.descricao}</td>
-            <td>${p.unidade || 'UN'}</td>
-            <td><strong>${p.quantidade}</strong></td>
-            <td>R$ ${parseFloat(p.valor_unitario).toFixed(2)}</td>
-            <td><strong>R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}</strong></td>
-            <td class="actions-cell">
-                <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
-                <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
-                <button onclick="openEntradaModal('${p.id}')" class="action-btn success">Entrada</button>
-                <button onclick="openSaidaModal('${p.id}')" class="action-btn delete">Saída</button>
-            </td>
-        </tr>
-    `).join('');
-}
+tbody.innerHTML = products.map(p => `
+    <tr>
+        <td><strong>${p.codigo}</strong></td>
+        <td>${p.marca}</td>
+        <td>${p.codigo_fornecedor}</td>
+        <td>${p.descricao}</td>
+        <td>${p.unidade || 'UN'}</td>
+        <td><strong>${p.quantidade}</strong></td>
+        <td>R$ ${parseFloat(p.valor_unitario).toFixed(2)}</td>
+        <td><strong>R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}</strong></td>
+        <td class="actions-cell">
+            <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
+            <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
+            <button onclick="openEntradaModal('${p.id}')" class="action-btn success">Entrada</button>
+            <button onclick="openSaidaModal('${p.id}')" class="action-btn delete">Saída</button>
+        </td>
+    </tr>
+`).join('');
 
 // MODAL DE ABAS
 let editingProductId = null;
