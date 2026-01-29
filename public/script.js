@@ -373,6 +373,10 @@ window.toggleForm = function() {
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
     
+    // MOSTRAR campos que devem aparecer no modo criação
+    document.getElementById('grupo').closest('.form-group').style.display = 'block';
+    document.getElementById('quantidade').closest('.form-group').style.display = 'block';
+    
     switchTab('fornecedor');
     
     document.getElementById('formModal').classList.add('show');
@@ -406,9 +410,11 @@ window.editProduct = async function(id) {
     document.getElementById('marca').value = produto.marca;
     document.getElementById('descricao').value = produto.descricao;
     document.getElementById('unidade').value = produto.unidade || 'UN';
-    document.getElementById('quantidade').value = produto.quantidade;
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
-    document.getElementById('grupo').value = produto.grupo_id || '';
+    
+    // OCULTAR campos que não devem aparecer no modo edição
+    document.getElementById('grupo').closest('.form-group').style.display = 'none';
+    document.getElementById('quantidade').closest('.form-group').style.display = 'none';
     
     switchTab('fornecedor');
     
@@ -424,15 +430,19 @@ window.saveProduct = async function(event) {
         marca: document.getElementById('marca').value.trim(),
         descricao: document.getElementById('descricao').value.trim(),
         unidade: document.getElementById('unidade').value,
-        quantidade: parseInt(document.getElementById('quantidade').value),
-        valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
-        grupo_id: document.getElementById('grupo').value
+        valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
     };
 
-    if (!formData.grupo_id) {
-        showMessage('Selecione um grupo', 'error');
-        switchTab('produto');
-        return;
+    // Adicionar grupo_id e quantidade APENAS no modo criação
+    if (!editingProductId) {
+        formData.grupo_id = document.getElementById('grupo').value;
+        formData.quantidade = parseInt(document.getElementById('quantidade').value);
+        
+        if (!formData.grupo_id) {
+            showMessage('Selecione um grupo', 'error');
+            switchTab('produto');
+            return;
+        }
     }
 
     try {
@@ -462,10 +472,10 @@ window.saveProduct = async function(event) {
         closeFormModal(false);
         
         if (editingProductId) {
-            showMessage(`${savedProduct.codigo} atualizado`, 'success');
+            showMessage(`${savedProduct.codigo} atualizado com sucesso`, 'success');
         } else {
-            showMessage(`${savedProduct.codigo} registrado`, 'success');
-            showMessage(`Entrada de ${formData.quantidade} para o item ${savedProduct.codigo}`, 'success');
+            showMessage(`${savedProduct.codigo} cadastrado com sucesso`, 'success');
+            showMessage(`Entrada de ${formData.quantidade} unidades registrada`, 'success');
         }
     } catch (error) {
         showMessage(error.message, 'error');
