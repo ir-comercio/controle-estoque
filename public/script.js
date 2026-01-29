@@ -23,6 +23,19 @@ document.addEventListener('DOMContentLoaded', () => {
     verificarAutenticacao();
 });
 
+// Função de formatação monetária brasileira
+function formatarMoeda(valor) {
+    if (valor === null || valor === undefined || isNaN(valor)) {
+        return 'R$ 0,00';
+    }
+    return valor.toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
 function verificarAutenticacao() {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('sessionToken');
@@ -343,8 +356,8 @@ tbody.innerHTML = products.map(p => `
         <td>${p.descricao}</td>
         <td>${p.unidade || 'UN'}</td>
         <td><strong>${p.quantidade}</strong></td>
-        <td>R$ ${parseFloat(p.valor_unitario).toFixed(2)}</td>
-        <td><strong>R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}</strong></td>
+<td>${formatarMoeda(parseFloat(p.valor_unitario))}</td>
+<td><strong>${formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))}</strong></td>
         <td class="actions-cell">
             <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
             <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
@@ -528,11 +541,11 @@ window.viewProduct = function(id) {
         </div>
         <div class="view-detail-item">
             <div class="view-detail-label">Valor Unitário</div>
-            <div class="view-detail-value">R$ ${parseFloat(produto.valor_unitario).toFixed(2)}</div>
+            <div class="view-detail-value">${formatarMoeda(parseFloat(produto.valor_unitario))}</div>
         </div>
         <div class="view-detail-item">
             <div class="view-detail-label">Valor Total</div>
-            <div class="view-detail-value">R$ ${(produto.quantidade * parseFloat(produto.valor_unitario)).toFixed(2)}</div>
+            <div class="view-detail-value">${formatarMoeda(produto.quantidade * parseFloat(produto.valor_unitario))}</div>
         </div>
     `;
 
@@ -831,8 +844,8 @@ window.generateInventoryPDF = function() {
             p.descricao,
             p.unidade || 'UN',
             p.quantidade.toString(),
-            `R$ ${parseFloat(p.valor_unitario).toFixed(2)}`,
-            `R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}`
+formatarMoeda(parseFloat(p.valor_unitario)),
+formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))
         ]);
 
         // Adicionar tabela
@@ -893,7 +906,7 @@ window.generateInventoryPDF = function() {
         startY += 6;
         doc.text(`Quantidade Total: ${quantidadeGrupo}`, 14, startY);
         startY += 6;
-        doc.text(`Valor Total: R$ ${valorGrupo.toFixed(2)}`, 14, startY);
+        doc.text(`Valor Total: ${formatarMoeda(valorGrupo)}`, 14, startY);
         startY += 12;
     });
 
@@ -915,7 +928,7 @@ doc.setFontSize(11);
 doc.setFont(undefined, 'normal');
 doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
 startY += 7;
-doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
+doc.text(`Valor Total em Estoque: ${formatarMoeda(valorTotalGeral)}`, 14, startY);;
 
     // Salvar PDF
     doc.save(`Relatorio_Estoque_${new Date().toISOString().split('T')[0]}.pdf`);
