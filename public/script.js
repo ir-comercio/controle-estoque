@@ -392,6 +392,16 @@ window.toggleForm = function() {
     document.getElementById('valor_unitario').disabled = false;
     document.getElementById('grupo').disabled = false;
     
+    // Mostrar todos os campos da aba Produto
+    document.getElementById('grupoField').style.display = 'block';
+    document.getElementById('unidadeField').style.display = 'block';
+    document.getElementById('quantidadeField').style.display = 'block';
+    
+    // ADICIONAR: Reativar required nos campos
+    document.getElementById('grupo').required = true;
+    document.getElementById('unidade').required = true;
+    document.getElementById('quantidade').required = true;
+    
     // Mostrar botão de adicionar grupo
     const btnAddGrupo = document.getElementById('btnAddGrupo');
     if (btnAddGrupo) {
@@ -432,23 +442,36 @@ window.editProduct = async function(id) {
     document.getElementById('descricao').value = produto.descricao;
     document.getElementById('unidade').value = produto.unidade || 'UN';
     
-    // NOVO: Desabilitar campos não editáveis
+    // Valor unitário EDITÁVEL
+    document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
+    document.getElementById('valor_unitario').disabled = false;
+    
+    // Campos NÃO editáveis (ocultos)
     document.getElementById('marca').value = produto.marca;
     document.getElementById('marca').disabled = true;
     
     document.getElementById('quantidade').value = produto.quantidade;
-    document.getElementById('quantidade').disabled = true;
-    
-    document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
-    document.getElementById('valor_unitario').disabled = true;
-    
     document.getElementById('grupo').value = produto.grupo_id || '';
-    document.getElementById('grupo').disabled = true;
+    
+    // ADICIONAR: Remover required dos campos ocultos
+    document.getElementById('grupo').required = false;
+    document.getElementById('unidade').required = false;
+    document.getElementById('quantidade').required = false;
+    
+    // Ocultar campos desnecessários na aba Produto
+    document.getElementById('grupoField').style.display = 'none';
+    document.getElementById('unidadeField').style.display = 'none';
+    document.getElementById('quantidadeField').style.display = 'none';
+    
+    // Ocultar botão de adicionar grupo
+    const btnAddGrupo = document.getElementById('btnAddGrupo');
+    if (btnAddGrupo) {
+        btnAddGrupo.style.display = 'none';
+    }
     
     switchTab('fornecedor');
     document.getElementById('formModal').classList.add('show');
 };
-
 window.saveProduct = async function(event) {
     event.preventDefault();
 
