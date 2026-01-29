@@ -294,6 +294,7 @@ window.sincronizarManual = async function() {
 
     try {
         await loadProducts();
+        await loadGrupos(); // 🎯 ADICIONAR SINCRONIZAÇÃO DE GRUPOS
         showMessage('Dados atualizados', 'success');
     } finally {
         if (btn) {
@@ -373,10 +374,15 @@ window.toggleForm = function() {
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
     
-    switchTab('fornecedor');
+    // ADICIONAR: Reabilitar todos os campos
+    document.getElementById('marca').disabled = false;
+    document.getElementById('quantidade').disabled = false;
+    document.getElementById('valor_unitario').disabled = false;
+    document.getElementById('grupo').disabled = false;
     
+    switchTab('fornecedor');
     document.getElementById('formModal').classList.add('show');
-};
+};;
 
 window.closeFormModal = function(cancelado = false) {
     const modal = document.getElementById('formModal');
@@ -401,17 +407,27 @@ window.editProduct = async function(id) {
     editingProductId = id;
     formCancelado = false;
     document.getElementById('formTitle').textContent = 'Editar Produto';
+    
+    // Campos editáveis
     document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
     document.getElementById('ncm').value = produto.ncm || '';
-    document.getElementById('marca').value = produto.marca;
     document.getElementById('descricao').value = produto.descricao;
     document.getElementById('unidade').value = produto.unidade || 'UN';
+    
+    // NOVO: Desabilitar campos não editáveis
+    document.getElementById('marca').value = produto.marca;
+    document.getElementById('marca').disabled = true;
+    
     document.getElementById('quantidade').value = produto.quantidade;
+    document.getElementById('quantidade').disabled = true;
+    
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
+    document.getElementById('valor_unitario').disabled = true;
+    
     document.getElementById('grupo').value = produto.grupo_id || '';
+    document.getElementById('grupo').disabled = true;
     
     switchTab('fornecedor');
-    
     document.getElementById('formModal').classList.add('show');
 };
 
@@ -883,11 +899,13 @@ window.generateInventoryPDF = function() {
         startY += 12;
     });
 
-    // Totais gerais na última página
-    if (startY > 160) {
-        doc.addPage();
-        startY = 15;
-    }
+// Totais gerais na última página
+if (startY > 160) {
+    doc.addPage();
+    startY = 15;
+} else {
+    startY += 30; // 🎯 ADICIONAR ESPAÇAMENTO EXTRA (ajuste o valor conforme necessário)
+}
 
     doc.setFontSize(14);
     doc.setFont(undefined, 'bold');
@@ -895,13 +913,11 @@ window.generateInventoryPDF = function() {
     doc.text('TOTAIS GERAIS:', 14, startY);
     startY += 10;
 
-    doc.setFontSize(11);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
-    startY += 7;
-    doc.text(`Quantidade Total: ${quantidadeTotalGeral}`, 14, startY);
-    startY += 7;
-    doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
+doc.setFontSize(11);
+doc.setFont(undefined, 'normal');
+doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
+startY += 7;
+doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
 
     // Salvar PDF
     doc.save(`Relatorio_Estoque_${new Date().toISOString().split('T')[0]}.pdf`);
