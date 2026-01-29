@@ -427,7 +427,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .icon-btn {
-    background: var(--primary);
+    background: #6B7280; /* ALTERADO: era var(--primary) */
     color: white;
     border: none;
     width: 44px;
@@ -444,7 +444,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .icon-btn:hover {
-    background: #B36000;
+    background: #4B5563; /* ALTERADO: era #B36000 */
     transform: scale(1.05);
 }
 
