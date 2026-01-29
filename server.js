@@ -156,22 +156,40 @@ app.head('/api/estoque', (req, res) => {
 
 // ===== ROTAS DE GRUPOS =====
 
-// Listar todos os grupos
+// Listar todos os grupos (extrair grupos únicos da tabela estoque)
 app.get('/api/grupos', async (req, res) => {
     try {
+        // Buscar grupos únicos da tabela estoque
         const { data, error } = await supabase
-            .from('grupos')
-            .select('*')
-            .order('codigo', { ascending: true });
+            .from('estoque')
+            .select('grupo_codigo, grupo_nome')
+            .order('grupo_codigo', { ascending: true });
 
         if (error) throw error;
-        res.json(data || []);
+
+        // Extrair grupos únicos
+        const gruposUnicos = [];
+        const gruposSet = new Set();
+
+        data.forEach(item => {
+            const key = `${item.grupo_codigo}-${item.grupo_nome}`;
+            if (!gruposSet.has(key)) {
+                gruposSet.add(key);
+                gruposUnicos.push({
+                    codigo: item.grupo_codigo,
+                    nome: item.grupo_nome
+                });
+            }
+        });
+
+        res.json(gruposUnicos);
     } catch (error) {
+        console.error('Erro ao buscar grupos:', error);
         res.status(500).json({ error: 'Erro ao buscar grupos' });
     }
 });
 
-// Criar novo grupo
+// Criar novo grupo (criar produto inicial para o grupo)
 app.post('/api/grupos', async (req, res) => {
     try {
         const { nome } = req.body;
@@ -182,26 +200,40 @@ app.post('/api/grupos', async (req, res) => {
 
         // Obter próximo código de grupo (múltiplo de 10000)
         const { data: maxData } = await supabase
-            .from('grupos')
-            .select('codigo')
-            .order('codigo', { ascending: false })
+            .from('estoque')
+            .select('grupo_codigo')
+            .order('grupo_codigo', { ascending: false })
             .limit(1)
             .single();
 
-        const proximoCodigo = maxData ? maxData.codigo + 10000 : 10000;
+        const proximoCodigo = maxData ? maxData.grupo_codigo + 10000 : 10000;
 
+        // Criar produto inicial para o grupo
         const { data, error } = await supabase
-            .from('grupos')
+            .from('estoque')
             .insert([{
-                codigo: proximoCodigo,
-                nome: nome.trim().toUpperCase()
+                codigo: proximoCodigo + 1,
+                codigo_fornecedor: `GRUPO-${proximoCodigo}`,
+                marca: 'SISTEMA',
+                descricao: `GRUPO ${nome.trim().toUpperCase()}`,
+                grupo_codigo: proximoCodigo,
+                grupo_nome: nome.trim().toUpperCase(),
+                quantidade: 0,
+                valor_unitario: 0.01,
+                unidade: 'UN'
             }])
             .select()
             .single();
 
         if (error) throw error;
-        res.status(201).json(data);
+
+        res.status(201).json({
+            codigo: data.grupo_codigo,
+            nome: data.grupo_nome,
+            created_at: data.created_at
+        });
     } catch (error) {
+        console.error('Erro ao criar grupo:', error);
         if (error.code === '23505') {
             res.status(400).json({ error: 'Grupo já existe' });
         } else {
@@ -212,24 +244,29 @@ app.post('/api/grupos', async (req, res) => {
 
 // ===== ROTAS DE ESTOQUE =====
 
-// Listar produtos com informações de grupo
+// Listar produtos
 app.get('/api/estoque', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('estoque')
-            .select(`
-                *,
-                grupos:grupo_id (
-                    id,
-                    codigo,
-                    nome
-                )
-            `)
+            .select('*')
             .order('codigo', { ascending: true });
 
         if (error) throw error;
-        res.json(data || []);
+
+        // Transformar para manter compatibilidade com frontend
+        const transformed = data.map(item => ({
+            ...item,
+            grupos: {
+                id: null,
+                codigo: item.grupo_codigo,
+                nome: item.grupo_nome
+            }
+        }));
+
+        res.json(transformed);
     } catch (error) {
+        console.error('Erro ao buscar produtos:', error);
         res.status(500).json({ error: 'Erro ao buscar produtos' });
     }
 });
@@ -239,23 +276,27 @@ app.get('/api/estoque/:id', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('estoque')
-            .select(`
-                *,
-                grupos:grupo_id (
-                    id,
-                    codigo,
-                    nome
-                )
-            `)
+            .select('*')
             .eq('id', req.params.id)
             .single();
 
         if (error) {
             return res.status(404).json({ error: 'Produto não encontrado' });
         }
+
+        // Transformar para compatibilidade
+        const transformed = {
+            ...data,
+            grupos: {
+                id: null,
+                codigo: data.grupo_codigo,
+                nome: data.grupo_nome
+            }
+        };
         
-        res.json(data);
+        res.json(transformed);
     } catch (error) {
+        console.error('Erro ao buscar produto:', error);
         res.status(500).json({ error: 'Erro ao buscar produto' });
     }
 });
@@ -280,14 +321,15 @@ app.post('/api/estoque', async (req, res) => {
             return res.status(400).json({ error: 'Código do fornecedor já cadastrado' });
         }
 
-        // Obter o grupo e próximo código sequencial do grupo
-        const { data: grupo, error: grupoError } = await supabase
-            .from('grupos')
-            .select('codigo')
-            .eq('id', grupo_id)
+        // Buscar informações do grupo (grupo_id é o código do grupo)
+        const { data: grupoData } = await supabase
+            .from('estoque')
+            .select('grupo_codigo, grupo_nome')
+            .eq('grupo_codigo', grupo_id)
+            .limit(1)
             .single();
 
-        if (grupoError || !grupo) {
+        if (!grupoData) {
             return res.status(400).json({ error: 'Grupo inválido' });
         }
 
@@ -295,14 +337,25 @@ app.post('/api/estoque', async (req, res) => {
         const { data: ultimoProdutoGrupo } = await supabase
             .from('estoque')
             .select('codigo')
-            .eq('grupo_id', grupo_id)
+            .eq('grupo_codigo', grupoData.grupo_codigo)
             .order('codigo', { ascending: false })
             .limit(1)
             .single();
 
         const proximoCodigo = ultimoProdutoGrupo 
             ? ultimoProdutoGrupo.codigo + 1
-            : grupo.codigo + 1;
+            : grupoData.grupo_codigo + 1;
+
+        // Criar movimentação de entrada
+        const movimentacaoInicial = [{
+            id: crypto.randomUUID(),
+            tipo: 'entrada',
+            quantidade: parseInt(quantidade),
+            codigo_produto: proximoCodigo,
+            marca: marca.trim().toUpperCase(),
+            codigo_fornecedor: codigo_fornecedor.trim(),
+            created_at: new Date().toISOString()
+        }];
 
         const { data, error } = await supabase
             .from('estoque')
@@ -315,7 +368,9 @@ app.post('/api/estoque', async (req, res) => {
                 unidade: unidade || 'UN',
                 quantidade: parseInt(quantidade),
                 valor_unitario: parseFloat(valor_unitario),
-                grupo_id: grupo_id,
+                grupo_codigo: grupoData.grupo_codigo,
+                grupo_nome: grupoData.grupo_nome,
+                movimentacoes: movimentacaoInicial,
                 timestamp: new Date().toISOString()
             }])
             .select()
@@ -323,20 +378,9 @@ app.post('/api/estoque', async (req, res) => {
 
         if (error) throw error;
 
-        // Registrar movimentação de entrada
-        await supabase
-            .from('movimentacoes')
-            .insert([{
-                estoque_id: data.id,
-                tipo: 'entrada',
-                quantidade: parseInt(quantidade),
-                codigo_produto: data.codigo,
-                marca: data.marca,
-                codigo_fornecedor: data.codigo_fornecedor
-            }]);
-
         res.status(201).json(data);
     } catch (error) {
+        console.error('Erro ao criar produto:', error);
         res.status(500).json({ error: 'Erro ao criar produto' });
     }
 });
@@ -360,8 +404,19 @@ app.put('/api/estoque/:id', async (req, res) => {
             timestamp: new Date().toISOString()
         };
 
+        // Se mudou o grupo, atualizar também
         if (grupo_id) {
-            updateData.grupo_id = grupo_id;
+            const { data: grupoData } = await supabase
+                .from('estoque')
+                .select('grupo_codigo, grupo_nome')
+                .eq('grupo_codigo', grupo_id)
+                .limit(1)
+                .single();
+
+            if (grupoData) {
+                updateData.grupo_codigo = grupoData.grupo_codigo;
+                updateData.grupo_nome = grupoData.grupo_nome;
+            }
         }
 
         const { data, error } = await supabase
@@ -377,6 +432,7 @@ app.put('/api/estoque/:id', async (req, res) => {
         
         res.json(data);
     } catch (error) {
+        console.error('Erro ao atualizar produto:', error);
         res.status(500).json({ error: 'Erro ao atualizar produto' });
     }
 });
@@ -412,11 +468,29 @@ app.post('/api/estoque/:id/movimentar', async (req, res) => {
             novaQuantidade -= parseInt(quantidade);
         }
 
-        // Atualizar quantidade
+        // Criar nova movimentação
+        const novaMovimentacao = {
+            id: crypto.randomUUID(),
+            tipo: tipo,
+            quantidade: parseInt(quantidade),
+            codigo_produto: produto.codigo,
+            marca: produto.marca,
+            codigo_fornecedor: produto.codigo_fornecedor,
+            created_at: new Date().toISOString()
+        };
+
+        // Adicionar movimentação ao array
+        const movimentacoesAtualizadas = [
+            ...(produto.movimentacoes || []),
+            novaMovimentacao
+        ];
+
+        // Atualizar produto
         const { data, error } = await supabase
             .from('estoque')
             .update({
                 quantidade: novaQuantidade,
+                movimentacoes: movimentacoesAtualizadas,
                 timestamp: new Date().toISOString()
             })
             .eq('id', req.params.id)
@@ -425,20 +499,9 @@ app.post('/api/estoque/:id/movimentar', async (req, res) => {
 
         if (error) throw error;
 
-        // Registrar movimentação
-        await supabase
-            .from('movimentacoes')
-            .insert([{
-                estoque_id: produto.id,
-                tipo: tipo,
-                quantidade: parseInt(quantidade),
-                codigo_produto: produto.codigo,
-                marca: produto.marca,
-                codigo_fornecedor: produto.codigo_fornecedor
-            }]);
-
         res.json(data);
     } catch (error) {
+        console.error('Erro ao movimentar estoque:', error);
         res.status(500).json({ error: 'Erro ao movimentar estoque' });
     }
 });
@@ -454,42 +517,65 @@ app.delete('/api/estoque/:id', async (req, res) => {
         if (error) throw error;
         res.status(204).end();
     } catch (error) {
+        console.error('Erro ao excluir produto:', error);
         res.status(500).json({ error: 'Erro ao excluir produto' });
     }
 });
 
 // ===== ROTAS DE MOVIMENTAÇÕES =====
 
-// Listar movimentações com paginação
+// Listar movimentações (extrair do JSON de todos os produtos)
 app.get('/api/movimentacoes', async (req, res) => {
     try {
         const { tipo, page = 1, limit = 4 } = req.query;
-        const offset = (page - 1) * limit;
 
-        let query = supabase
-            .from('movimentacoes')
-            .select('*', { count: 'exact' })
-            .order('created_at', { ascending: false })
-            .range(offset, offset + parseInt(limit) - 1);
-
-        if (tipo && ['entrada', 'saida'].includes(tipo)) {
-            query = query.eq('tipo', tipo);
-        }
-
-        const { data, error, count } = await query;
+        // Buscar todos os produtos com movimentações
+        const { data: produtos, error } = await supabase
+            .from('estoque')
+            .select('id, movimentacoes')
+            .not('movimentacoes', 'is', null);
 
         if (error) throw error;
 
+        // Extrair e consolidar todas as movimentações
+        let todasMovimentacoes = [];
+        produtos.forEach(produto => {
+            if (produto.movimentacoes && Array.isArray(produto.movimentacoes)) {
+                produto.movimentacoes.forEach(mov => {
+                    todasMovimentacoes.push({
+                        ...mov,
+                        estoque_id: produto.id
+                    });
+                });
+            }
+        });
+
+        // Filtrar por tipo se especificado
+        if (tipo && ['entrada', 'saida'].includes(tipo)) {
+            todasMovimentacoes = todasMovimentacoes.filter(m => m.tipo === tipo);
+        }
+
+        // Ordenar por data (mais recente primeiro)
+        todasMovimentacoes.sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+        );
+
+        // Paginar
+        const total = todasMovimentacoes.length;
+        const offset = (page - 1) * limit;
+        const paginadas = todasMovimentacoes.slice(offset, offset + parseInt(limit));
+
         res.json({
-            data: data || [],
+            data: paginadas,
             pagination: {
-                total: count,
+                total: total,
                 page: parseInt(page),
                 limit: parseInt(limit),
-                totalPages: Math.ceil(count / parseInt(limit))
+                totalPages: Math.ceil(total / parseInt(limit))
             }
         });
     } catch (error) {
+        console.error('Erro ao buscar movimentações:', error);
         res.status(500).json({ error: 'Erro ao buscar movimentações' });
     }
 });
@@ -512,6 +598,7 @@ app.use((req, res) => {
 
 // TRATAMENTO DE ERROS
 app.use((error, req, res, next) => {
+    console.error('Erro interno:', error);
     res.status(500).json({
         error: 'Erro interno do servidor'
     });
@@ -522,6 +609,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ Servidor rodando na porta ${PORT}`);
     console.log(`✅ Database: Conectado`);
     console.log(`✅ Autenticação: Ativa`);
+    console.log(`✅ Modo: Tabela Única (sem views/funções)`);
     console.log(`📝 Logs salvos em: acessos.log\n`);
 });
 
