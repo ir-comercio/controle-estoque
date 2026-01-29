@@ -356,8 +356,8 @@ tbody.innerHTML = products.map(p => `
         <td>${p.descricao}</td>
         <td>${p.unidade || 'UN'}</td>
         <td><strong>${p.quantidade}</strong></td>
-<td>${formatarMoeda(parseFloat(p.valor_unitario))}</td>
-<td><strong>${formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))}</strong></td>
+        <td>${formatarMoeda(parseFloat(p.valor_unitario))}</td>
+        <td><strong>${formatarMoeda(p.quantidade * parseFloat(p.valor_unitario))}</strong></td>
         <td class="actions-cell">
             <button onclick="viewProduct('${p.id}')" class="action-btn view">Ver</button>
             <button onclick="editProduct('${p.id}')" class="action-btn edit">Editar</button>
@@ -366,6 +366,7 @@ tbody.innerHTML = products.map(p => `
         </td>
     </tr>
 `).join('');
+} // ✅ ADICIONAR ESTA CHAVE DE FECHAMENTO
 
 // MODAL DE ABAS
 let editingProductId = null;
@@ -393,7 +394,7 @@ window.toggleForm = function() {
     
     switchTab('fornecedor');
     document.getElementById('formModal').classList.add('show');
-};;
+};
 
 window.closeFormModal = function(cancelado = false) {
     const modal = document.getElementById('formModal');
@@ -928,7 +929,7 @@ doc.setFontSize(11);
 doc.setFont(undefined, 'normal');
 doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
 startY += 7;
-doc.text(`Valor Total em Estoque: ${formatarMoeda(valorTotalGeral)}`, 14, startY);;
+doc.text(`Valor Total em Estoque: ${formatarMoeda(valorTotalGeral)}`, 14, startY); // ✅ ÚNICO
 
     // Salvar PDF
     doc.save(`Relatorio_Estoque_${new Date().toISOString().split('T')[0]}.pdf`);
