@@ -540,6 +540,64 @@ window.editProduct = async function(id) {
     document.getElementById('formModal').classList.add('show');
 };
 
+// MODAL DE VISUALIZAÇÃO
+window.viewProduct = function(id) {
+    const produto = produtos.find(p => p.id === id);
+    if (!produto) return;
+
+    const grupoNome = produto.grupos ? produto.grupos.nome : 'Sem grupo';
+
+    const detailsHtml = `
+        <div class="view-detail-item">
+            <div class="view-detail-label">Código</div>
+            <div class="view-detail-value">${produto.codigo}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Grupo</div>
+            <div class="view-detail-value">${grupoNome}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Marca</div>
+            <div class="view-detail-value">${produto.marca}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Modelo (Cód. Fornecedor)</div>
+            <div class="view-detail-value">${produto.codigo_fornecedor}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">NCM</div>
+            <div class="view-detail-value">${produto.ncm || '-'}</div>
+        </div>
+        <div class="view-detail-item" style="grid-column: 1 / -1;">
+            <div class="view-detail-label">Descrição</div>
+            <div class="view-detail-value">${produto.descricao}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Unidade</div>
+            <div class="view-detail-value">${produto.unidade || 'UN'}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Quantidade</div>
+            <div class="view-detail-value">${produto.quantidade}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Valor Unitário</div>
+            <div class="view-detail-value">${formatarMoeda(parseFloat(produto.valor_unitario))}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Valor Total</div>
+            <div class="view-detail-value">${formatarMoeda(produto.quantidade * parseFloat(produto.valor_unitario))}</div>
+        </div>
+    `;
+
+    document.getElementById('viewDetails').innerHTML = detailsHtml;
+    document.getElementById('viewModal').classList.add('show');
+};
+
+window.closeViewModal = function() {
+    document.getElementById('viewModal').classList.remove('show');
+};
+
 // MODAL DE ENTRADA
 let entradaProductId = null;
 
