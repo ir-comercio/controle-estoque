@@ -386,11 +386,17 @@ window.toggleForm = function() {
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
     
-    // ADICIONAR: Reabilitar todos os campos
+    // Reabilitar todos os campos
     document.getElementById('marca').disabled = false;
     document.getElementById('quantidade').disabled = false;
     document.getElementById('valor_unitario').disabled = false;
     document.getElementById('grupo').disabled = false;
+    
+    // Mostrar botão de adicionar grupo
+    const btnAddGrupo = document.getElementById('btnAddGrupo');
+    if (btnAddGrupo) {
+        btnAddGrupo.style.display = 'flex';
+    }
     
     switchTab('fornecedor');
     document.getElementById('formModal').classList.add('show');
@@ -446,21 +452,35 @@ window.editProduct = async function(id) {
 window.saveProduct = async function(event) {
     event.preventDefault();
 
-    const formData = {
-        codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
-        ncm: document.getElementById('ncm').value.trim(),
-        marca: document.getElementById('marca').value.trim(),
-        descricao: document.getElementById('descricao').value.trim(),
-        unidade: document.getElementById('unidade').value,
-        quantidade: parseInt(document.getElementById('quantidade').value),
-        valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
-        grupo_id: document.getElementById('grupo').value
-    };
+    let formData;
+    
+    if (editingProductId) {
+        // MODO EDIÇÃO: apenas campos editáveis
+        formData = {
+            codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
+            ncm: document.getElementById('ncm').value.trim(),
+            descricao: document.getElementById('descricao').value.trim(),
+            unidade: document.getElementById('unidade').value,
+            valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
+        };
+    } else {
+        // MODO CRIAÇÃO: todos os campos
+        formData = {
+            codigo_fornecedor: document.getElementById('codigo_fornecedor').value.trim(),
+            ncm: document.getElementById('ncm').value.trim(),
+            marca: document.getElementById('marca').value.trim(),
+            descricao: document.getElementById('descricao').value.trim(),
+            unidade: document.getElementById('unidade').value,
+            quantidade: parseInt(document.getElementById('quantidade').value),
+            valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
+            grupo_id: document.getElementById('grupo').value
+        };
 
-    if (!formData.grupo_id) {
-        showMessage('Selecione um grupo', 'error');
-        switchTab('produto');
-        return;
+        if (!formData.grupo_id) {
+            showMessage('Selecione um grupo', 'error');
+            switchTab('produto');
+            return;
+        }
     }
 
     try {
@@ -501,61 +521,42 @@ window.saveProduct = async function(event) {
 };
 
 // MODAL DE VISUALIZAÇÃO
-window.viewProduct = function(id) {
+window.editProduct = async function(id) {
     const produto = produtos.find(p => p.id === id);
     if (!produto) return;
 
-    const grupoNome = produto.grupos ? produto.grupos.nome : 'Sem grupo';
-
-    const detailsHtml = `
-        <div class="view-detail-item">
-            <div class="view-detail-label">Código</div>
-            <div class="view-detail-value">${produto.codigo}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Grupo</div>
-            <div class="view-detail-value">${grupoNome}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Marca</div>
-            <div class="view-detail-value">${produto.marca}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Modelo (Cód. Fornecedor)</div>
-            <div class="view-detail-value">${produto.codigo_fornecedor}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">NCM</div>
-            <div class="view-detail-value">${produto.ncm || '-'}</div>
-        </div>
-        <div class="view-detail-item" style="grid-column: 1 / -1;">
-            <div class="view-detail-label">Descrição</div>
-            <div class="view-detail-value">${produto.descricao}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Unidade</div>
-            <div class="view-detail-value">${produto.unidade || 'UN'}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Quantidade</div>
-            <div class="view-detail-value">${produto.quantidade}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Valor Unitário</div>
-            <div class="view-detail-value">${formatarMoeda(parseFloat(produto.valor_unitario))}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Valor Total</div>
-            <div class="view-detail-value">${formatarMoeda(produto.quantidade * parseFloat(produto.valor_unitario))}</div>
-        </div>
-    `;
-
-    document.getElementById('viewDetails').innerHTML = detailsHtml;
-    document.getElementById('viewModal').classList.add('show');
-};
-
-window.closeViewModal = function() {
-    document.getElementById('viewModal').classList.remove('show');
+    editingProductId = id;
+    formCancelado = false;
+    document.getElementById('formTitle').textContent = 'Editar Produto';
+    
+    // Campos editáveis
+    document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
+    document.getElementById('ncm').value = produto.ncm || '';
+    document.getElementById('descricao').value = produto.descricao;
+    document.getElementById('unidade').value = produto.unidade || 'UN';
+    
+    // Valor unitário EDITÁVEL
+    document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
+    document.getElementById('valor_unitario').disabled = false;
+    
+    // Campos NÃO editáveis
+    document.getElementById('marca').value = produto.marca;
+    document.getElementById('marca').disabled = true;
+    
+    document.getElementById('quantidade').value = produto.quantidade;
+    document.getElementById('quantidade').disabled = true;
+    
+    document.getElementById('grupo').value = produto.grupo_id || '';
+    document.getElementById('grupo').disabled = true;
+    
+    // Ocultar botão de adicionar grupo
+    const btnAddGrupo = document.getElementById('btnAddGrupo');
+    if (btnAddGrupo) {
+        btnAddGrupo.style.display = 'none';
+    }
+    
+    switchTab('fornecedor');
+    document.getElementById('formModal').classList.add('show');
 };
 
 // MODAL DE ENTRADA
