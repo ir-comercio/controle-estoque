@@ -388,16 +388,18 @@ window.toggleForm = function() {
     
     // Reabilitar todos os campos
     document.getElementById('marca').disabled = false;
+    document.getElementById('marca').required = true;
     document.getElementById('quantidade').disabled = false;
     document.getElementById('valor_unitario').disabled = false;
     document.getElementById('grupo').disabled = false;
     
-    // Mostrar todos os campos da aba Produto
+    // Mostrar TODOS os campos
+    document.getElementById('marcaField').style.display = 'block';
     document.getElementById('grupoField').style.display = 'block';
     document.getElementById('unidadeField').style.display = 'block';
     document.getElementById('quantidadeField').style.display = 'block';
     
-    // ADICIONAR: Reativar required nos campos
+    // Reativar required nos campos
     document.getElementById('grupo').required = true;
     document.getElementById('unidade').required = true;
     document.getElementById('quantidade').required = true;
@@ -436,29 +438,29 @@ window.editProduct = async function(id) {
     formCancelado = false;
     document.getElementById('formTitle').textContent = 'Editar Produto';
     
-    // Campos editáveis
+    // Preencher campos editáveis
     document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
     document.getElementById('ncm').value = produto.ncm || '';
     document.getElementById('descricao').value = produto.descricao;
-    document.getElementById('unidade').value = produto.unidade || 'UN';
     
     // Valor unitário EDITÁVEL
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
     document.getElementById('valor_unitario').disabled = false;
     
-    // Campos NÃO editáveis (ocultos)
+    // Preencher campos ocultos (para não perder dados)
     document.getElementById('marca').value = produto.marca;
-    document.getElementById('marca').disabled = true;
-    
+    document.getElementById('unidade').value = produto.unidade || 'UN';
     document.getElementById('quantidade').value = produto.quantidade;
     document.getElementById('grupo').value = produto.grupo_id || '';
     
-    // ADICIONAR: Remover required dos campos ocultos
+    // Remover required dos campos ocultos
+    document.getElementById('marca').required = false;
     document.getElementById('grupo').required = false;
     document.getElementById('unidade').required = false;
     document.getElementById('quantidade').required = false;
     
-    // Ocultar campos desnecessários na aba Produto
+    // OCULTAR campos não editáveis
+    document.getElementById('marcaField').style.display = 'none';
     document.getElementById('grupoField').style.display = 'none';
     document.getElementById('unidadeField').style.display = 'none';
     document.getElementById('quantidadeField').style.display = 'none';
@@ -472,6 +474,7 @@ window.editProduct = async function(id) {
     switchTab('fornecedor');
     document.getElementById('formModal').classList.add('show');
 };
+
 window.saveProduct = async function(event) {
     event.preventDefault();
 
