@@ -1,13 +1,13 @@
 {
   "name": "sistema-estoque",
-  "version": "1.0.0",
-  "description": "Sistema de gerenciamento de estoque com Node.js e Supabase",
+  "version": "2.0.0",
+  "description": "Sistema de gerenciamento de estoque com grupos e histórico de movimentações",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "keywords": ["estoque", "gestao", "supabase"],
+  "keywords": ["estoque", "gestao", "supabase", "grupos", "movimentacoes"],
   "author": "",
   "license": "MIT",
   "dependencies": {
