@@ -899,3 +899,12 @@ button.small {
         grid-template-columns: 1fr;
     }
 }
+
+/* Botão de adicionar grupo cinza */
+.icon-btn.grupo-cinza {
+    background: #6B7280;
+}
+
+.icon-btn.grupo-cinza:hover {
+    background: #4B5563;
+}
