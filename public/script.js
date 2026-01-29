@@ -263,6 +263,18 @@ async function loadProducts(silencioso = false) {
         const newHash = JSON.stringify(data.map(p => `${p.id}-${p.quantidade}`));
         
         if (newHash !== lastDataHash) {
+            // MONITORAR SAÍDAS INDIRETAS
+            data.forEach(produto => {
+                const qtdAnterior = quantidadesAnteriores[produto.id];
+                if (qtdAnterior !== undefined && produto.quantidade < qtdAnterior) {
+                    const diferenca = qtdAnterior - produto.quantidade;
+                    if (!silencioso) {
+                        showMessage(`Saída detectada: ${diferenca} un. do item ${produto.codigo}`, 'error');
+                    }
+                }
+                quantidadesAnteriores[produto.id] = produto.quantidade;
+            });
+            
             lastDataHash = newHash;
             produtos = data;
             
