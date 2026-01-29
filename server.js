@@ -147,6 +147,18 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// FUNÇÕES AUXILIARES
+function parseNumero(valor) {
+    if (typeof valor === 'number') return valor;
+    if (!valor) return 0;
+    
+    // Remover espaços e converter vírgula para ponto
+    const valorLimpo = String(valor).trim().replace(',', '.');
+    const numero = parseFloat(valorLimpo);
+    
+    return isNaN(numero) ? 0 : numero;
+}
+
 // ROTAS DA API
 app.use('/api', verificarAutenticacao);
 
@@ -204,7 +216,7 @@ app.post('/api/grupos', async (req, res) => {
             .select('grupo_codigo')
             .order('grupo_codigo', { ascending: false })
             .limit(1)
-            .single();
+            .maybeSingle();
 
         const proximoCodigo = maxData ? maxData.grupo_codigo + 10000 : 10000;
 
@@ -225,7 +237,10 @@ app.post('/api/grupos', async (req, res) => {
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error('Erro ao criar grupo:', error);
+            throw error;
+        }
 
         res.status(201).json({
             codigo: data.grupo_codigo,
@@ -237,7 +252,7 @@ app.post('/api/grupos', async (req, res) => {
         if (error.code === '23505') {
             res.status(400).json({ error: 'Grupo já existe' });
         } else {
-            res.status(500).json({ error: 'Erro ao criar grupo' });
+            res.status(500).json({ error: 'Erro ao criar grupo: ' + error.message });
         }
     }
 });
@@ -310,12 +325,20 @@ app.post('/api/estoque', async (req, res) => {
             return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
         }
 
+        // Normalizar valores numéricos
+        const qtdNormalizada = parseNumero(quantidade);
+        const valorNormalizado = parseNumero(valor_unitario);
+
+        if (qtdNormalizada < 0 || valorNormalizado < 0) {
+            return res.status(400).json({ error: 'Quantidade e valor devem ser positivos' });
+        }
+
         // Verificar se código do fornecedor já existe
         const { data: existing } = await supabase
             .from('estoque')
             .select('id')
             .eq('codigo_fornecedor', codigo_fornecedor)
-            .single();
+            .maybeSingle();
 
         if (existing) {
             return res.status(400).json({ error: 'Código do fornecedor já cadastrado' });
@@ -327,7 +350,7 @@ app.post('/api/estoque', async (req, res) => {
             .select('grupo_codigo, grupo_nome')
             .eq('grupo_codigo', grupo_id)
             .limit(1)
-            .single();
+            .maybeSingle();
 
         if (!grupoData) {
             return res.status(400).json({ error: 'Grupo inválido' });
@@ -340,7 +363,7 @@ app.post('/api/estoque', async (req, res) => {
             .eq('grupo_codigo', grupoData.grupo_codigo)
             .order('codigo', { ascending: false })
             .limit(1)
-            .single();
+            .maybeSingle();
 
         const proximoCodigo = ultimoProdutoGrupo 
             ? ultimoProdutoGrupo.codigo + 1
@@ -350,7 +373,7 @@ app.post('/api/estoque', async (req, res) => {
         const movimentacaoInicial = [{
             id: crypto.randomUUID(),
             tipo: 'entrada',
-            quantidade: parseInt(quantidade),
+            quantidade: Math.floor(qtdNormalizada),
             codigo_produto: proximoCodigo,
             marca: marca.trim().toUpperCase(),
             codigo_fornecedor: codigo_fornecedor.trim(),
@@ -366,8 +389,8 @@ app.post('/api/estoque', async (req, res) => {
                 marca: marca.trim().toUpperCase(),
                 descricao: descricao.trim().toUpperCase(),
                 unidade: unidade || 'UN',
-                quantidade: parseInt(quantidade),
-                valor_unitario: parseFloat(valor_unitario),
+                quantidade: Math.floor(qtdNormalizada),
+                valor_unitario: valorNormalizado,
                 grupo_codigo: grupoData.grupo_codigo,
                 grupo_nome: grupoData.grupo_nome,
                 movimentacoes: movimentacaoInicial,
@@ -376,12 +399,15 @@ app.post('/api/estoque', async (req, res) => {
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error('Erro ao inserir produto:', error);
+            throw error;
+        }
 
         res.status(201).json(data);
     } catch (error) {
         console.error('Erro ao criar produto:', error);
-        res.status(500).json({ error: 'Erro ao criar produto' });
+        res.status(500).json({ error: 'Erro ao criar produto: ' + error.message });
     }
 });
 
@@ -394,13 +420,19 @@ app.put('/api/estoque/:id', async (req, res) => {
             return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
         }
 
+        const valorNormalizado = parseNumero(valor_unitario);
+
+        if (valorNormalizado < 0) {
+            return res.status(400).json({ error: 'Valor deve ser positivo' });
+        }
+
         const updateData = {
             codigo_fornecedor: codigo_fornecedor.trim(),
             ncm: ncm ? ncm.trim() : null,
             marca: marca.trim().toUpperCase(),
             descricao: descricao.trim().toUpperCase(),
             unidade: unidade || 'UN',
-            valor_unitario: parseFloat(valor_unitario),
+            valor_unitario: valorNormalizado,
             timestamp: new Date().toISOString()
         };
 
@@ -411,7 +443,7 @@ app.put('/api/estoque/:id', async (req, res) => {
                 .select('grupo_codigo, grupo_nome')
                 .eq('grupo_codigo', grupo_id)
                 .limit(1)
-                .single();
+                .maybeSingle();
 
             if (grupoData) {
                 updateData.grupo_codigo = grupoData.grupo_codigo;
@@ -427,13 +459,14 @@ app.put('/api/estoque/:id', async (req, res) => {
             .single();
 
         if (error) {
+            console.error('Erro ao atualizar produto:', error);
             return res.status(404).json({ error: 'Produto não encontrado' });
         }
         
         res.json(data);
     } catch (error) {
         console.error('Erro ao atualizar produto:', error);
-        res.status(500).json({ error: 'Erro ao atualizar produto' });
+        res.status(500).json({ error: 'Erro ao atualizar produto: ' + error.message });
     }
 });
 
@@ -442,7 +475,9 @@ app.post('/api/estoque/:id/movimentar', async (req, res) => {
     try {
         const { tipo, quantidade } = req.body;
 
-        if (!['entrada', 'saida'].includes(tipo) || !quantidade || quantidade <= 0) {
+        const qtdNormalizada = parseNumero(quantidade);
+
+        if (!['entrada', 'saida'].includes(tipo) || qtdNormalizada <= 0) {
             return res.status(400).json({ error: 'Dados inválidos' });
         }
 
@@ -459,20 +494,22 @@ app.post('/api/estoque/:id/movimentar', async (req, res) => {
 
         // Calcular nova quantidade
         let novaQuantidade = produto.quantidade;
+        const qtdInteira = Math.floor(qtdNormalizada);
+        
         if (tipo === 'entrada') {
-            novaQuantidade += parseInt(quantidade);
+            novaQuantidade += qtdInteira;
         } else {
-            if (produto.quantidade < parseInt(quantidade)) {
+            if (produto.quantidade < qtdInteira) {
                 return res.status(400).json({ error: 'Quantidade insuficiente em estoque' });
             }
-            novaQuantidade -= parseInt(quantidade);
+            novaQuantidade -= qtdInteira;
         }
 
         // Criar nova movimentação
         const novaMovimentacao = {
             id: crypto.randomUUID(),
             tipo: tipo,
-            quantidade: parseInt(quantidade),
+            quantidade: qtdInteira,
             codigo_produto: produto.codigo,
             marca: produto.marca,
             codigo_fornecedor: produto.codigo_fornecedor,
@@ -497,12 +534,15 @@ app.post('/api/estoque/:id/movimentar', async (req, res) => {
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error('Erro ao atualizar movimentação:', error);
+            throw error;
+        }
 
         res.json(data);
     } catch (error) {
         console.error('Erro ao movimentar estoque:', error);
-        res.status(500).json({ error: 'Erro ao movimentar estoque' });
+        res.status(500).json({ error: 'Erro ao movimentar estoque: ' + error.message });
     }
 });
 
