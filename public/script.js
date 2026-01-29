@@ -4,12 +4,17 @@ const API_URL = window.location.hostname === 'localhost' || window.location.host
     : `${window.location.origin}/api`;
 
 let produtos = [];
+let grupos = [];
 let isOnline = false;
-let marcaSelecionada = 'TODAS';
-let marcasDisponiveis = new Set();
+let grupoSelecionado = 'TODOS';
 let lastDataHash = '';
 let sessionToken = null;
 let autoSyncEnabled = true;
+
+// Variáveis para histórico
+let currentHistoryType = 'entrada';
+let currentHistoryPage = 1;
+let historyData = { data: [], pagination: { totalPages: 1 } };
 
 console.log('🚀 Estoque iniciado');
 console.log('📍 API URL:', API_URL);
@@ -50,6 +55,7 @@ function mostrarTelaAcessoNegado(mensagem = 'NÃO AUTORIZADO') {
 
 async function inicializarApp() {
     await checkServerStatus();
+    await loadGrupos();
     setInterval(checkServerStatus, 30000);
     setInterval(async () => {
         if (isOnline && autoSyncEnabled) {
@@ -110,6 +116,128 @@ function updateConnectionStatus() {
     }
 }
 
+// ===== GRUPOS =====
+
+async function loadGrupos() {
+    if (!isOnline) return;
+    
+    try {
+        const response = await fetch(`${API_URL}/grupos`, {
+            headers: {
+                'X-Session-Token': sessionToken,
+                'Accept': 'application/json'
+            }
+        });
+
+        if (response.status === 401) {
+            sessionStorage.removeItem('estoqueSession');
+            mostrarTelaAcessoNegado('Sua sessão expirou');
+            return;
+        }
+
+        if (!response.ok) throw new Error('Erro ao carregar grupos');
+
+        grupos = await response.json();
+        renderGruposFilter();
+        populateGrupoSelect();
+    } catch (error) {
+        console.error('Erro ao carregar grupos:', error);
+    }
+}
+
+function renderGruposFilter() {
+    const container = document.getElementById('gruposFilter');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    const btnTodos = document.createElement('button');
+    btnTodos.className = `brand-button ${grupoSelecionado === 'TODOS' ? 'active' : ''}`;
+    btnTodos.textContent = 'TODOS';
+    btnTodos.onclick = () => filtrarPorGrupo('TODOS');
+    container.appendChild(btnTodos);
+
+    grupos.forEach(grupo => {
+        const btn = document.createElement('button');
+        btn.className = `brand-button ${grupoSelecionado === grupo.id ? 'active' : ''}`;
+        btn.textContent = grupo.nome;
+        btn.onclick = () => filtrarPorGrupo(grupo.id);
+        container.appendChild(btn);
+    });
+}
+
+function populateGrupoSelect() {
+    const select = document.getElementById('grupo');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">Selecione um grupo</option>';
+    
+    grupos.forEach(grupo => {
+        const option = document.createElement('option');
+        option.value = grupo.id;
+        option.textContent = grupo.nome;
+        select.appendChild(option);
+    });
+}
+
+function filtrarPorGrupo(grupoId) {
+    grupoSelecionado = grupoId;
+    renderGruposFilter();
+    filterProducts();
+}
+
+window.openNewGroupModal = function() {
+    document.getElementById('nomeGrupo').value = '';
+    document.getElementById('newGroupModal').classList.add('show');
+};
+
+window.closeNewGroupModal = function() {
+    document.getElementById('newGroupModal').classList.remove('show');
+};
+
+window.saveNewGroup = async function(event) {
+    event.preventDefault();
+    
+    const nome = document.getElementById('nomeGrupo').value.trim();
+    
+    if (!nome) {
+        showMessage('Nome do grupo é obrigatório', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/grupos`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Token': sessionToken
+            },
+            body: JSON.stringify({ nome })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Erro ao criar grupo');
+        }
+
+        const novoGrupo = await response.json();
+        
+        await loadGrupos();
+        closeNewGroupModal();
+        showMessage(`Grupo "${novoGrupo.nome}" criado com código ${novoGrupo.codigo}`, 'success');
+        
+        // Selecionar automaticamente o novo grupo no formulário
+        const grupoSelect = document.getElementById('grupo');
+        if (grupoSelect) {
+            grupoSelect.value = novoGrupo.id;
+        }
+    } catch (error) {
+        showMessage(error.message, 'error');
+    }
+};
+
+// ===== PRODUTOS =====
+
 async function loadProducts(silencioso = false) {
     if (!isOnline) return;
     
@@ -137,10 +265,6 @@ async function loadProducts(silencioso = false) {
             lastDataHash = newHash;
             produtos = data;
             
-            marcasDisponiveis.clear();
-            produtos.forEach(p => marcasDisponiveis.add(p.marca));
-            
-            renderMarcasFilter();
             filterProducts();
             
             if (!silencioso) {
@@ -180,40 +304,13 @@ window.sincronizarManual = async function() {
     }
 };
 
-function renderMarcasFilter() {
-    const container = document.getElementById('marcasFilter');
-    if (!container) return;
-
-    container.innerHTML = '';
-
-    const btnTodas = document.createElement('button');
-    btnTodas.className = `brand-button ${marcaSelecionada === 'TODAS' ? 'active' : ''}`;
-    btnTodas.textContent = 'TODAS';
-    btnTodas.onclick = () => filtrarPorMarca('TODAS');
-    container.appendChild(btnTodas);
-
-    Array.from(marcasDisponiveis).sort().forEach(marca => {
-        const btn = document.createElement('button');
-        btn.className = `brand-button ${marcaSelecionada === marca ? 'active' : ''}`;
-        btn.textContent = marca;
-        btn.onclick = () => filtrarPorMarca(marca);
-        container.appendChild(btn);
-    });
-}
-
-function filtrarPorMarca(marca) {
-    marcaSelecionada = marca;
-    renderMarcasFilter();
-    filterProducts();
-}
-
 function filterProducts() {
     const search = document.getElementById('search').value.toLowerCase();
     
     let filtered = produtos;
 
-    if (marcaSelecionada !== 'TODAS') {
-        filtered = filtered.filter(p => p.marca === marcaSelecionada);
+    if (grupoSelecionado !== 'TODOS') {
+        filtered = filtered.filter(p => p.grupo_id === grupoSelecionado);
     }
 
     if (search) {
@@ -240,9 +337,9 @@ function renderTable(products) {
     tbody.innerHTML = products.map(p => `
         <tr>
             <td><strong>${p.codigo}</strong></td>
+            <td>${p.marca}</td>
             <td>${p.codigo_fornecedor}</td>
             <td>${p.ncm || '-'}</td>
-            <td>${p.marca}</td>
             <td>${p.descricao}</td>
             <td>${p.unidade || 'UN'}</td>
             <td><strong>${p.quantidade}</strong></td>
@@ -263,11 +360,9 @@ let editingProductId = null;
 let formCancelado = false;
 
 window.switchTab = function(tabName) {
-    // Remover active de todos os botões e conteúdos
     document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     
-    // Adicionar active ao selecionado
     document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
     document.getElementById(`tab-${tabName}`).classList.add('active');
 };
@@ -278,7 +373,6 @@ window.toggleForm = function() {
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
     
-    // Reset abas para a primeira
     switchTab('fornecedor');
     
     document.getElementById('formModal').classList.add('show');
@@ -314,8 +408,8 @@ window.editProduct = async function(id) {
     document.getElementById('unidade').value = produto.unidade || 'UN';
     document.getElementById('quantidade').value = produto.quantidade;
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
+    document.getElementById('grupo').value = produto.grupo_id || '';
     
-    // Reset abas para a primeira
     switchTab('fornecedor');
     
     document.getElementById('formModal').classList.add('show');
@@ -331,8 +425,15 @@ window.saveProduct = async function(event) {
         descricao: document.getElementById('descricao').value.trim(),
         unidade: document.getElementById('unidade').value,
         quantidade: parseInt(document.getElementById('quantidade').value),
-        valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
+        valor_unitario: parseFloat(document.getElementById('valor_unitario').value),
+        grupo_id: document.getElementById('grupo').value
     };
+
+    if (!formData.grupo_id) {
+        showMessage('Selecione um grupo', 'error');
+        switchTab('produto');
+        return;
+    }
 
     try {
         const url = editingProductId 
@@ -376,10 +477,20 @@ window.viewProduct = function(id) {
     const produto = produtos.find(p => p.id === id);
     if (!produto) return;
 
+    const grupoNome = produto.grupos ? produto.grupos.nome : 'Sem grupo';
+
     const detailsHtml = `
         <div class="view-detail-item">
             <div class="view-detail-label">Código</div>
             <div class="view-detail-value">${produto.codigo}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Grupo</div>
+            <div class="view-detail-value">${grupoNome}</div>
+        </div>
+        <div class="view-detail-item">
+            <div class="view-detail-label">Marca</div>
+            <div class="view-detail-value">${produto.marca}</div>
         </div>
         <div class="view-detail-item">
             <div class="view-detail-label">Modelo (Cód. Fornecedor)</div>
@@ -388,10 +499,6 @@ window.viewProduct = function(id) {
         <div class="view-detail-item">
             <div class="view-detail-label">NCM</div>
             <div class="view-detail-value">${produto.ncm || '-'}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Marca</div>
-            <div class="view-detail-value">${produto.marca}</div>
         </div>
         <div class="view-detail-item" style="grid-column: 1 / -1;">
             <div class="view-detail-label">Descrição</div>
@@ -537,7 +644,113 @@ window.processarSaida = async function(event) {
     }
 };
 
-// GERAR PDF ORGANIZADO POR MARCA
+// ===== HISTÓRICO DE MOVIMENTAÇÕES =====
+
+window.openHistoryModal = async function() {
+    currentHistoryType = 'entrada';
+    currentHistoryPage = 1;
+    document.getElementById('historyModal').classList.add('show');
+    
+    // Reset tab buttons
+    document.querySelectorAll('#historyModal .tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector('#historyModal .tab-button:first-child').classList.add('active');
+    
+    await loadHistoryData();
+};
+
+window.closeHistoryModal = function() {
+    document.getElementById('historyModal').classList.remove('show');
+};
+
+window.switchHistoryTab = async function(tipo) {
+    currentHistoryType = tipo;
+    currentHistoryPage = 1;
+    
+    // Update tab buttons
+    document.querySelectorAll('#historyModal .tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    await loadHistoryData();
+};
+
+window.previousHistoryPage = async function() {
+    if (currentHistoryPage > 1) {
+        currentHistoryPage--;
+        await loadHistoryData();
+    }
+};
+
+window.nextHistoryPage = async function() {
+    if (currentHistoryPage < historyData.pagination.totalPages) {
+        currentHistoryPage++;
+        await loadHistoryData();
+    }
+};
+
+async function loadHistoryData() {
+    const tbody = document.getElementById('historyTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">Carregando...</td></tr>';
+    
+    try {
+        const response = await fetch(`${API_URL}/movimentacoes?tipo=${currentHistoryType}&page=${currentHistoryPage}&limit=4`, {
+            headers: {
+                'X-Session-Token': sessionToken,
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) throw new Error('Erro ao carregar histórico');
+
+        historyData = await response.json();
+        renderHistoryTable();
+        updatePagination();
+    } catch (error) {
+        console.error('Erro ao carregar histórico:', error);
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--alert-color);">Erro ao carregar dados</td></tr>';
+    }
+}
+
+function renderHistoryTable() {
+    const tbody = document.getElementById('historyTableBody');
+    
+    if (!historyData.data || historyData.data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">Nenhuma movimentação encontrada</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = historyData.data.map(mov => {
+        const data = new Date(mov.created_at);
+        const dataFormatada = data.toLocaleDateString('pt-BR');
+        const horaFormatada = data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        
+        return `
+            <tr>
+                <td><strong>${mov.codigo_produto}</strong></td>
+                <td>${mov.marca}</td>
+                <td>${mov.codigo_fornecedor}</td>
+                <td><strong>${mov.quantidade}</strong></td>
+                <td>${dataFormatada} às ${horaFormatada}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updatePagination() {
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    const pageInfo = document.getElementById('pageInfo');
+    
+    prevBtn.disabled = currentHistoryPage === 1;
+    nextBtn.disabled = currentHistoryPage >= historyData.pagination.totalPages;
+    pageInfo.textContent = `Página ${currentHistoryPage} de ${historyData.pagination.totalPages}`;
+}
+
+// ===== GERAR PDF ORGANIZADO POR GRUPO =====
+
 window.generateInventoryPDF = function() {
     if (produtos.length === 0) {
         showMessage('Nenhum produto para gerar relatório', 'error');
@@ -558,42 +771,47 @@ window.generateInventoryPDF = function() {
     const dataHora = new Date().toLocaleString('pt-BR');
     doc.text(`Gerado em: ${dataHora}`, 148, 22, { align: 'center' });
 
-    // Organizar produtos por marca
-    const produtosPorMarca = {};
+    // Organizar produtos por grupo
+    const produtosPorGrupo = {};
     produtos.forEach(produto => {
-        if (!produtosPorMarca[produto.marca]) {
-            produtosPorMarca[produto.marca] = [];
+        const grupoNome = produto.grupos ? produto.grupos.nome : 'SEM GRUPO';
+        if (!produtosPorGrupo[grupoNome]) {
+            produtosPorGrupo[grupoNome] = [];
         }
-        produtosPorMarca[produto.marca].push(produto);
+        produtosPorGrupo[grupoNome].push(produto);
     });
 
-    // Ordenar marcas alfabeticamente
-    const marcasOrdenadas = Object.keys(produtosPorMarca).sort();
+    // Ordenar grupos alfabeticamente
+    const gruposOrdenados = Object.keys(produtosPorGrupo).sort();
 
     let startY = 30;
+    const totaisPorGrupo = {};
+    let valorTotalGeral = 0;
+    let quantidadeTotalGeral = 0;
 
-    marcasOrdenadas.forEach((marca, index) => {
+    gruposOrdenados.forEach((grupoNome) => {
         // Verificar se precisa adicionar nova página
-        if (startY > 180) {
+        if (startY > 170) {
             doc.addPage();
             startY = 15;
         }
 
-        // Nome da marca
+        // Nome do grupo
         doc.setFontSize(14);
         doc.setFont(undefined, 'bold');
-        doc.setTextColor(204, 112, 0); // Cor laranja
-        doc.text(marca, 14, startY);
+        doc.setTextColor(204, 112, 0);
+        doc.text(grupoNome, 14, startY);
         startY += 8;
 
         // Ordenar produtos por código (crescente)
-        const produtosOrdenados = produtosPorMarca[marca].sort((a, b) => {
+        const produtosOrdenados = produtosPorGrupo[grupoNome].sort((a, b) => {
             return parseInt(a.codigo) - parseInt(b.codigo);
         });
 
         // Preparar dados da tabela
         const tableData = produtosOrdenados.map(p => [
             p.codigo.toString(),
+            p.marca,
             p.codigo_fornecedor,
             p.ncm || '-',
             p.descricao,
@@ -606,62 +824,83 @@ window.generateInventoryPDF = function() {
         // Adicionar tabela
         doc.autoTable({
             startY: startY,
-            head: [['Código', 'Modelo', 'NCM', 'Descrição', 'Un.', 'Qtd', 'Valor Un.', 'Valor Total']],
+            head: [['Código', 'Marca', 'Modelo', 'NCM', 'Descrição', 'Un.', 'Qtd', 'Valor Un.', 'Valor Total']],
             body: tableData,
             theme: 'grid',
             headStyles: {
                 fillColor: [107, 114, 128],
                 textColor: [255, 255, 255],
-                fontSize: 9,
+                fontSize: 8,
                 fontStyle: 'bold'
             },
             bodyStyles: {
-                fontSize: 8,
+                fontSize: 7,
                 textColor: [26, 26, 26]
             },
             alternateRowStyles: {
                 fillColor: [250, 250, 250]
             },
             columnStyles: {
-                0: { cellWidth: 20 },
-                1: { cellWidth: 25 },
-                2: { cellWidth: 20 },
-                3: { cellWidth: 90 },
-                4: { cellWidth: 15, halign: 'center' },
-                5: { cellWidth: 18, halign: 'center' },
-                6: { cellWidth: 25, halign: 'right' },
-                7: { cellWidth: 30, halign: 'right' }
+                0: { cellWidth: 18 },
+                1: { cellWidth: 22 },
+                2: { cellWidth: 22 },
+                3: { cellWidth: 18 },
+                4: { cellWidth: 80 },
+                5: { cellWidth: 12, halign: 'center' },
+                6: { cellWidth: 15, halign: 'center' },
+                7: { cellWidth: 25, halign: 'right' },
+                8: { cellWidth: 28, halign: 'right' }
             },
             margin: { left: 14, right: 14 }
         });
 
-        startY = doc.lastAutoTable.finalY + 12;
+        startY = doc.lastAutoTable.finalY + 8;
+
+        // Calcular totais do grupo
+        const quantidadeGrupo = produtosOrdenados.reduce((acc, p) => acc + p.quantidade, 0);
+        const valorGrupo = produtosOrdenados.reduce((acc, p) => {
+            return acc + (p.quantidade * parseFloat(p.valor_unitario));
+        }, 0);
+
+        totaisPorGrupo[grupoNome] = {
+            quantidade: quantidadeGrupo,
+            valor: valorGrupo,
+            itens: produtosOrdenados.length
+        };
+
+        valorTotalGeral += valorGrupo;
+        quantidadeTotalGeral += quantidadeGrupo;
+
+        // Exibir totais do grupo
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text(`Total de Itens: ${produtosOrdenados.length}`, 14, startY);
+        startY += 6;
+        doc.text(`Quantidade Total: ${quantidadeGrupo}`, 14, startY);
+        startY += 6;
+        doc.text(`Valor Total: R$ ${valorGrupo.toFixed(2)}`, 14, startY);
+        startY += 12;
     });
 
     // Totais gerais na última página
-    const valorTotalGeral = produtos.reduce((acc, p) => {
-        return acc + (p.quantidade * parseFloat(p.valor_unitario));
-    }, 0);
-
-    const quantidadeTotalGeral = produtos.reduce((acc, p) => acc + p.quantidade, 0);
-
-    if (startY > 170) {
+    if (startY > 160) {
         doc.addPage();
         startY = 15;
     }
 
-    doc.setFontSize(12);
+    doc.setFontSize(14);
     doc.setFont(undefined, 'bold');
     doc.setTextColor(0, 0, 0);
     doc.text('TOTAIS GERAIS:', 14, startY);
-    startY += 8;
+    startY += 10;
 
-    doc.setFontSize(10);
+    doc.setFontSize(11);
     doc.setFont(undefined, 'normal');
     doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
-    startY += 6;
+    startY += 7;
     doc.text(`Quantidade Total: ${quantidadeTotalGeral}`, 14, startY);
-    startY += 6;
+    startY += 7;
     doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
 
     // Salvar PDF
