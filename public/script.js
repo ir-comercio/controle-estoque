@@ -1,18 +1,27 @@
+// CONFIGURAÇÃO
 const PORTAL_URL = 'https://ir-comercio-portal-zcan.onrender.com';
 const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3002/api'
     : `${window.location.origin}/api`;
 
-let produtos = [];
-let grupos = [];
-let quantidadesAnteriores = {};
-let isOnline = false;
-let grupoSelecionado = 'TODOS';
-let lastDataHash = '';
-let sessionToken = null;
-let autoSyncEnabled = true;
+const PAGE_SIZE = 50;
 
-// Variáveis para histórico
+let state = {
+    produtos: [],
+    grupos: [],                 // [{ codigo, nome }]
+    currentPage: 1,
+    totalPages: 1,
+    totalRecords: 0,
+    grupoCodigo: null,          // null = TODOS
+    searchTerm: '',
+    isLoading: false
+};
+
+let isOnline = false;
+let sessionToken = null;
+let editingProductId = null;
+
+// Histórico
 let currentHistoryType = 'entrada';
 let currentHistoryPage = 1;
 let historyData = { data: [], pagination: { totalPages: 1 } };
@@ -23,6 +32,8 @@ console.log('📍 API URL:', API_URL);
 document.addEventListener('DOMContentLoaded', () => {
     verificarAutenticacao();
 });
+
+// ─── AUTENTICAÇÃO ─────────────────────────────────────────────────────────────
 
 function verificarAutenticacao() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -36,156 +47,269 @@ function verificarAutenticacao() {
         sessionToken = sessionStorage.getItem('estoqueSession');
     }
 
-    if (!sessionToken) {
-        mostrarTelaAcessoNegado();
-        return;
-    }
-
+    if (!sessionToken) { mostrarTelaAcessoNegado(); return; }
     inicializarApp();
 }
 
 function mostrarTelaAcessoNegado(mensagem = 'NÃO AUTORIZADO') {
     document.body.innerHTML = `
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: var(--bg-primary); color: var(--text-primary); text-align: center; padding: 2rem;">
-            <h1 style="font-size: 2.2rem; margin-bottom: 1rem;">${mensagem}</h1>
-            <p style="color: var(--text-secondary); margin-bottom: 2rem;">Somente usuários autenticados podem acessar esta área.</p>
-            <a href="${PORTAL_URL}" style="display: inline-block; background: var(--btn-register); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Ir para o Portal</a>
-        </div>
-    `;
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:var(--bg-primary);color:var(--text-primary);text-align:center;padding:2rem;">
+            <h1 style="font-size:2.2rem;margin-bottom:1rem;">${mensagem}</h1>
+            <p style="color:var(--text-secondary);margin-bottom:2rem;">Somente usuários autenticados podem acessar esta área.</p>
+            <a href="${PORTAL_URL}" style="display:inline-block;background:var(--btn-register);color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;">Ir para o Portal</a>
+        </div>`;
 }
 
-async function inicializarApp() {
-    await checkServerStatus();
-    await loadGrupos();
-    setInterval(checkServerStatus, 30000);
+// ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
+
+function inicializarApp() {
+    carregarTudo();
+
     setInterval(async () => {
-        if (isOnline && autoSyncEnabled) {
-            await loadProducts(true);
+        const online = await verificarConexao();
+        if (online && !isOnline) {
+            isOnline = true;
+            updateConnectionStatus();
+            carregarTudo();
+        } else if (!online && isOnline) {
+            isOnline = false;
+            updateConnectionStatus();
         }
+    }, 15000);
+
+    setInterval(() => {
+        if (isOnline && !state.isLoading) loadProducts(state.currentPage, false);
     }, 60000);
 }
 
-async function checkServerStatus() {
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+function getHeaders() {
+    const h = { 'Accept': 'application/json' };
+    if (sessionToken) h['X-Session-Token'] = sessionToken;
+    return h;
+}
+
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), timeout);
     try {
-        const headers = {
-            'Accept': 'application/json'
-        };
-        
-        if (sessionToken) {
-            headers['X-Session-Token'] = sessionToken;
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-        const response = await fetch(`${API_URL}/estoque`, {
-            method: 'HEAD',
-            headers: headers,
-            mode: 'cors',
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.status === 401) {
-            sessionStorage.removeItem('estoqueSession');
-            mostrarTelaAcessoNegado('Sua sessão expirou');
-            return false;
-        }
-
-        const wasOffline = !isOnline;
-        isOnline = response.ok;
-        
-        if (wasOffline && isOnline) {
-            console.log('✅ SERVIDOR ONLINE');
-            await loadProducts();
-        }
-        
-        updateConnectionStatus();
-        return isOnline;
-    } catch (error) {
-        isOnline = false;
-        updateConnectionStatus();
-        return false;
+        const res = await fetch(url, { ...options, signal: controller.signal, mode: 'cors' });
+        clearTimeout(tid);
+        return res;
+    } catch (err) {
+        clearTimeout(tid);
+        throw err;
     }
 }
 
 function updateConnectionStatus() {
-    const status = document.getElementById('connectionStatus');
-    if (status) {
-        status.className = isOnline ? 'connection-status online' : 'connection-status offline';
-    }
+    const el = document.getElementById('connectionStatus');
+    if (el) el.className = isOnline ? 'connection-status online' : 'connection-status offline';
 }
 
-// ===== GRUPOS =====
-
-async function loadGrupos() {
-    if (!isOnline) return;
-    
+async function verificarConexao() {
     try {
-        const response = await fetch(`${API_URL}/grupos`, {
-            headers: {
-                'X-Session-Token': sessionToken,
-                'Accept': 'application/json'
-            }
-        });
-
-        if (response.status === 401) {
+        const res = await fetchWithTimeout(`${API_URL}/estoque?page=1&limit=1`, { method: 'GET', headers: getHeaders() });
+        if (res.status === 401) {
             sessionStorage.removeItem('estoqueSession');
             mostrarTelaAcessoNegado('Sua sessão expirou');
-            return;
+            return false;
+        }
+        return res.ok;
+    } catch { return false; }
+}
+
+// ─── CARGA INICIAL ────────────────────────────────────────────────────────────
+
+async function carregarTudo() {
+    try {
+        const [gruposRes, produtosRes] = await Promise.all([
+            fetchWithTimeout(`${API_URL}/grupos`, { method: 'GET', headers: getHeaders() }),
+            fetchWithTimeout(`${API_URL}/estoque?page=1&limit=${PAGE_SIZE}`, { method: 'GET', headers: getHeaders() })
+        ]);
+
+        if (gruposRes.ok) {
+            state.grupos = await gruposRes.json();
+            renderGruposFilter();
+            populateGrupoSelect();
         }
 
-        if (!response.ok) throw new Error('Erro ao carregar grupos');
-
-        grupos = await response.json();
-        renderGruposFilter();
-        populateGrupoSelect();
-    } catch (error) {
-        console.error('Erro ao carregar grupos:', error);
+        if (produtosRes.ok) {
+            const result = await produtosRes.json();
+            state.produtos      = result.data || [];
+            state.totalRecords  = result.total || 0;
+            state.totalPages    = result.totalPages || 1;
+            state.currentPage   = result.page || 1;
+            isOnline = true;
+            updateConnectionStatus();
+            renderTable();
+            renderPaginacao();
+        }
+    } catch (err) {
+        console.error('Erro ao carregar dados:', err);
     }
 }
+
+async function atualizarGrupos() {
+    try {
+        const res = await fetchWithTimeout(`${API_URL}/grupos`, { method: 'GET', headers: getHeaders() });
+        if (res.ok) {
+            state.grupos = await res.json();
+            renderGruposFilter();
+            populateGrupoSelect();
+        }
+    } catch (err) {
+        console.error('Erro ao atualizar grupos:', err);
+    }
+}
+
+// ─── GRUPOS / FILTRO ──────────────────────────────────────────────────────────
 
 function renderGruposFilter() {
     const container = document.getElementById('gruposFilter');
     if (!container) return;
 
-    container.innerHTML = '';
+    const btnTodos = `<button class="brand-button ${state.grupoCodigo === null ? 'active' : ''}" onclick="filtrarPorGrupo(null)">TODOS</button>`;
+    const btns = state.grupos.map(g =>
+        `<button class="brand-button ${state.grupoCodigo === g.codigo ? 'active' : ''}" onclick="filtrarPorGrupo(${g.codigo})">${g.nome}</button>`
+    ).join('');
 
-    const btnTodos = document.createElement('button');
-    btnTodos.className = `brand-button ${grupoSelecionado === 'TODOS' ? 'active' : ''}`;
-    btnTodos.textContent = 'TODOS';
-    btnTodos.onclick = () => filtrarPorGrupo('TODOS');
-    container.appendChild(btnTodos);
+    // Botão de gerenciar grupos
+    const btnGerenciar = `<button class="brand-button brand-button-manage" onclick="openManageGroupsModal()" title="Gerenciar grupos">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+    </button>`;
 
-    grupos.forEach(grupo => {
-        const btn = document.createElement('button');
-        btn.className = `brand-button ${grupoSelecionado === grupo.id ? 'active' : ''}`;
-        btn.textContent = grupo.nome;
-        btn.onclick = () => filtrarPorGrupo(grupo.id);
-        container.appendChild(btn);
-    });
+    container.innerHTML = btnTodos + btns + btnGerenciar;
 }
 
 function populateGrupoSelect() {
     const select = document.getElementById('grupo');
     if (!select) return;
-
+    const current = select.value;
     select.innerHTML = '<option value="">Selecione um grupo</option>';
-    
-    grupos.forEach(grupo => {
-        const option = document.createElement('option');
-        option.value = grupo.id;
-        option.textContent = grupo.nome;
-        select.appendChild(option);
+    state.grupos.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ codigo: g.codigo, nome: g.nome });
+        opt.textContent = g.nome;
+        select.appendChild(opt);
     });
+    if (current) select.value = current;
 }
 
-function filtrarPorGrupo(grupoId) {
-    grupoSelecionado = grupoId;
+function filtrarPorGrupo(grupoCodigo) {
+    state.grupoCodigo = grupoCodigo;
+    state.searchTerm = '';
+    const searchInput = document.getElementById('search');
+    if (searchInput) searchInput.value = '';
     renderGruposFilter();
-    filterProducts();
+    loadProducts(1);
 }
+
+function filterProducts() {
+    state.searchTerm = document.getElementById('search').value.trim();
+    loadProducts(1);
+}
+
+// ─── MODAL GERENCIAR GRUPOS ───────────────────────────────────────────────────
+
+function openManageGroupsModal() {
+    const rows = state.grupos.map(g => `
+        <tr>
+            <td><strong>${g.codigo}</strong></td>
+            <td>${g.nome}</td>
+            <td style="text-align:center;">
+                <button onclick="confirmarExcluirGrupo(${g.codigo}, '${g.nome.replace(/'/g, "\\'")}')" class="action-btn delete">Excluir</button>
+            </td>
+        </tr>
+    `).join('');
+
+    document.body.insertAdjacentHTML('beforeend', `
+        <div class="modal-overlay show" id="manageGroupsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">Gerenciar Grupos</h3>
+                    <button class="modal-close-btn" onclick="closeManageGroupsModal()">✕</button>
+                </div>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">
+                    ⚠️ Excluir um grupo remove <strong>todos os produtos</strong> pertencentes a ele.
+                </p>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Código</th><th>Nome</th><th style="text-align:center;">Ação</th></tr></thead>
+                        <tbody>${rows.length ? rows : '<tr><td colspan="3" style="text-align:center;padding:1rem;">Nenhum grupo cadastrado</td></tr>'}</tbody>
+                    </table>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeManageGroupsModal()" class="secondary">Fechar</button>
+                </div>
+            </div>
+        </div>
+    `);
+}
+
+function closeManageGroupsModal() {
+    const modal = document.getElementById('manageGroupsModal');
+    if (modal) modal.remove();
+}
+
+function confirmarExcluirGrupo(grupoCodigo, grupoNome) {
+    closeManageGroupsModal();
+    document.body.insertAdjacentHTML('beforeend', `
+        <div class="modal-overlay show" id="deleteGroupModal">
+            <div class="modal-content modal-small">
+                <button class="modal-close-btn" onclick="closeDeleteGroupModal()">✕</button>
+                <div class="modal-message-delete" style="padding:1.5rem 0;">
+                    Excluir o grupo <strong>${grupoNome}</strong>?<br>
+                    <span style="color:var(--alert-color);font-size:0.9rem;">Todos os produtos deste grupo serão excluídos permanentemente.</span>
+                </div>
+                <div class="modal-actions modal-actions-no-border">
+                    <button type="button" onclick="excluirGrupo(${grupoCodigo})" class="danger">Sim, excluir tudo</button>
+                    <button type="button" onclick="closeDeleteGroupModal()" class="danger">Cancelar</button>
+                </div>
+            </div>
+        </div>
+    `);
+}
+
+function closeDeleteGroupModal() {
+    const modal = document.getElementById('deleteGroupModal');
+    if (modal) modal.remove();
+}
+
+async function excluirGrupo(grupoCodigo) {
+    closeDeleteGroupModal();
+    try {
+        const res = await fetchWithTimeout(`${API_URL}/grupos/${grupoCodigo}`, {
+            method: 'DELETE', headers: getHeaders()
+        });
+
+        if (res.status === 401) {
+            sessionStorage.removeItem('estoqueSession');
+            mostrarTelaAcessoNegado('Sua sessão expirou');
+            return;
+        }
+
+        if (!res.ok) throw new Error('Erro ao excluir grupo');
+
+        const result = await res.json();
+        showMessage(result.message || 'Grupo excluído com sucesso', 'success');
+
+        // Se estava filtrado pelo grupo excluído, volta para TODOS
+        if (state.grupoCodigo === grupoCodigo) state.grupoCodigo = null;
+
+        await atualizarGrupos();
+        loadProducts(1);
+
+    } catch (error) {
+        showMessage(error.name === 'AbortError' ? 'Timeout: Operação demorou muito' : 'Erro ao excluir grupo', 'error');
+    }
+}
+
+// ─── MODAL NOVO GRUPO ─────────────────────────────────────────────────────────
 
 window.openNewGroupModal = function() {
     document.getElementById('nomeGrupo').value = '';
@@ -198,156 +322,113 @@ window.closeNewGroupModal = function() {
 
 window.saveNewGroup = async function(event) {
     event.preventDefault();
-    
     const nome = document.getElementById('nomeGrupo').value.trim();
-    
-    if (!nome) {
-        showMessage('Nome do grupo é obrigatório', 'error');
-        return;
-    }
+    if (!nome) { showMessage('Nome do grupo é obrigatório', 'error'); return; }
 
     try {
-        const response = await fetch(`${API_URL}/grupos`, {
+        const res = await fetchWithTimeout(`${API_URL}/grupos`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Token': sessionToken
-            },
+            headers: { 'Content-Type': 'application/json', ...getHeaders() },
             body: JSON.stringify({ nome })
-        });
+        }, 10000);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Erro ao criar grupo');
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Erro ao criar grupo');
         }
 
-        const novoGrupo = await response.json();
-        
-        await loadGrupos();
+        const novoGrupo = await res.json();
+
+        // Adiciona ao estado local e ao select
+        state.grupos.push({ codigo: novoGrupo.codigo, nome: novoGrupo.nome });
+        renderGruposFilter();
+        populateGrupoSelect();
+
         closeNewGroupModal();
         showMessage(`Grupo "${novoGrupo.nome}" criado com código ${novoGrupo.codigo}`, 'success');
-        
-        // Selecionar automaticamente o novo grupo no formulário
-        const grupoSelect = document.getElementById('grupo');
-        if (grupoSelect) {
-            grupoSelect.value = novoGrupo.id;
+
+        // Selecionar automaticamente o novo grupo no select
+        const select = document.getElementById('grupo');
+        if (select) {
+            const opts = Array.from(select.options);
+            const opt = opts.find(o => {
+                try { return JSON.parse(o.value).codigo === novoGrupo.codigo; } catch { return false; }
+            });
+            if (opt) select.value = opt.value;
         }
     } catch (error) {
         showMessage(error.message, 'error');
     }
 };
 
-// ===== PRODUTOS =====
+// ─── CARREGAMENTO PAGINADO ────────────────────────────────────────────────────
 
-async function loadProducts(silencioso = false) {
-    if (!isOnline) return;
-    
+async function loadProducts(page = 1, showLoader = true) {
+    if (state.isLoading) return;
+    state.isLoading = true;
+    state.currentPage = page;
+
+    if (showLoader) renderLoading();
+
     try {
-        const response = await fetch(`${API_URL}/estoque`, {
-            headers: {
-                'X-Session-Token': sessionToken,
-                'Accept': 'application/json'
-            }
+        const params = new URLSearchParams({ page, limit: PAGE_SIZE });
+        if (state.grupoCodigo !== null) params.set('grupo_codigo', state.grupoCodigo);
+        if (state.searchTerm) params.set('search', state.searchTerm);
+
+        const res = await fetchWithTimeout(`${API_URL}/estoque?${params}`, {
+            method: 'GET', headers: getHeaders()
         });
 
-        if (response.status === 401) {
+        if (res.status === 401) {
             sessionStorage.removeItem('estoqueSession');
             mostrarTelaAcessoNegado('Sua sessão expirou');
             return;
         }
 
-        if (!response.ok) throw new Error('Erro ao carregar');
+        if (!res.ok) { console.error('❌ Erro:', res.status); return; }
 
-        const data = await response.json();
-        
-        const newHash = JSON.stringify(data.map(p => `${p.id}-${p.quantidade}`));
-        
-        if (newHash !== lastDataHash) {
-            // MONITORAR SAÍDAS INDIRETAS
-            data.forEach(produto => {
-                const qtdAnterior = quantidadesAnteriores[produto.id];
-                if (qtdAnterior !== undefined && produto.quantidade < qtdAnterior) {
-                    const diferenca = qtdAnterior - produto.quantidade;
-                    if (!silencioso) {
-                        showMessage(`Saída detectada: ${diferenca} un. do item ${produto.codigo}`, 'error');
-                    }
-                }
-                quantidadesAnteriores[produto.id] = produto.quantidade;
-            });
-            
-            lastDataHash = newHash;
-            produtos = data;
-            
-            filterProducts();
-            
-            if (!silencioso) {
-                console.log(`📦 ${produtos.length} produtos carregados`);
-            }
-        }
+        const result = await res.json();
+        state.produtos     = result.data || [];
+        state.totalRecords = result.total || 0;
+        state.totalPages   = result.totalPages || 1;
+        state.currentPage  = result.page || page;
+
+        isOnline = true;
+        updateConnectionStatus();
+        renderTable();
+        renderPaginacao();
+
     } catch (error) {
-        console.error('Erro ao carregar produtos:', error);
-        if (!silencioso) {
-            showMessage('Erro ao carregar dados', 'error');
-        }
-    }
-}
-
-window.sincronizarManual = async function() {
-    if (!isOnline) {
-        showMessage('Sistema offline', 'error');
-        return;
-    }
-
-    const btn = document.querySelector('.sync-btn:last-child');
-    if (btn) {
-        btn.style.pointerEvents = 'none';
-        const svg = btn.querySelector('svg');
-        svg.style.animation = 'spin 1s linear infinite';
-    }
-
-    try {
-        await loadProducts();
-        showMessage('Dados atualizados', 'success');
+        console.error(error.name === 'AbortError' ? '❌ Timeout' : '❌ Erro:', error);
     } finally {
-        if (btn) {
-            btn.style.pointerEvents = 'auto';
-            const svg = btn.querySelector('svg');
-            svg.style.animation = 'none';
-        }
+        state.isLoading = false;
     }
-};
-
-function filterProducts() {
-    const search = document.getElementById('search').value.toLowerCase();
-    
-    let filtered = produtos;
-
-    if (grupoSelecionado !== 'TODOS') {
-        filtered = filtered.filter(p => p.grupo_id === grupoSelecionado);
-    }
-
-    if (search) {
-        filtered = filtered.filter(p =>
-            p.codigo.toString().includes(search) ||
-            p.codigo_fornecedor.toLowerCase().includes(search) ||
-            p.marca.toLowerCase().includes(search) ||
-            p.descricao.toLowerCase().includes(search)
-        );
-    }
-
-    renderTable(filtered);
 }
 
-function renderTable(products) {
+// ─── RENDER TABELA ────────────────────────────────────────────────────────────
+
+function renderLoading() {
+    const tbody = document.getElementById('estoqueTableBody');
+    if (tbody) {
+        tbody.innerHTML = `
+            <tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-secondary);">
+                <div style="display:flex;align-items:center;justify-content:center;gap:0.75rem;">
+                    <div class="loader" style="width:24px;height:24px;border-width:3px;"></div>Carregando...
+                </div>
+            </td></tr>`;
+    }
+}
+
+function renderTable() {
     const tbody = document.getElementById('estoqueTableBody');
     if (!tbody) return;
 
-    if (products.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 2rem;">Nenhum produto encontrado</td></tr>';
+    if (!state.produtos.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:2rem;">Nenhum produto encontrado</td></tr>';
         return;
     }
 
-    tbody.innerHTML = products.map(p => `
+    tbody.innerHTML = state.produtos.map(p => `
         <tr>
             <td><strong>${p.codigo}</strong></td>
             <td>${p.marca}</td>
@@ -368,55 +449,95 @@ function renderTable(products) {
     `).join('');
 }
 
-// MODAL DE ABAS
-let editingProductId = null;
-let formCancelado = false;
+// ─── PAGINAÇÃO ────────────────────────────────────────────────────────────────
+
+function renderPaginacao() {
+    const existing = document.getElementById('paginacaoContainer');
+    if (existing) existing.remove();
+
+    const tableCard = document.querySelector('.table-card');
+    if (!tableCard) return;
+
+    const total = state.totalPages;
+    const atual = state.currentPage;
+    const inicio = state.totalRecords === 0 ? 0 : (atual - 1) * PAGE_SIZE + 1;
+    const fim = Math.min(atual * PAGE_SIZE, state.totalRecords);
+
+    let paginas = [];
+    if (total <= 7) {
+        for (let i = 1; i <= total; i++) paginas.push(i);
+    } else {
+        paginas.push(1);
+        if (atual > 3) paginas.push('...');
+        for (let i = Math.max(2, atual - 1); i <= Math.min(total - 1, atual + 1); i++) paginas.push(i);
+        if (atual < total - 2) paginas.push('...');
+        paginas.push(total);
+    }
+
+    const botoesHTML = paginas.map(p =>
+        p === '...' ? `<span class="pag-ellipsis">…</span>`
+            : `<button class="pag-btn ${p === atual ? 'pag-btn-active' : ''}" onclick="loadProducts(${p})">${p}</button>`
+    ).join('');
+
+    const div = document.createElement('div');
+    div.id = 'paginacaoContainer';
+    div.className = 'paginacao-wrapper';
+    div.innerHTML = `
+        <div class="paginacao-info">
+            ${state.totalRecords > 0 ? `Exibindo ${inicio}–${fim} de ${state.totalRecords} registros` : 'Nenhum registro'}
+        </div>
+        <div class="paginacao-btns">
+            <button class="pag-btn pag-nav" onclick="loadProducts(${atual - 1})" ${atual === 1 ? 'disabled' : ''}>‹</button>
+            ${botoesHTML}
+            <button class="pag-btn pag-nav" onclick="loadProducts(${atual + 1})" ${atual === total ? 'disabled' : ''}>›</button>
+        </div>`;
+    tableCard.appendChild(div);
+}
+
+// ─── SINCRONIZAÇÃO MANUAL ─────────────────────────────────────────────────────
+
+window.sincronizarManual = async function() {
+    if (!isOnline) { showMessage('Sistema offline', 'error'); return; }
+    const btn = document.querySelector('.sync-btn:last-child');
+    if (btn) { btn.style.pointerEvents = 'none'; const svg = btn.querySelector('svg'); if (svg) svg.style.animation = 'spin 1s linear infinite'; }
+    try {
+        await carregarTudo();
+        showMessage('Dados atualizados', 'success');
+    } finally {
+        if (btn) { btn.style.pointerEvents = 'auto'; const svg = btn.querySelector('svg'); if (svg) svg.style.animation = 'none'; }
+    }
+};
+
+// ─── FORMULÁRIO PRODUTO ───────────────────────────────────────────────────────
 
 window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-    
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
     document.getElementById(`tab-${tabName}`).classList.add('active');
 };
 
 window.toggleForm = function() {
     editingProductId = null;
-    formCancelado = false;
     document.getElementById('formTitle').textContent = 'Novo Produto';
     document.getElementById('productForm').reset();
-    
-    // MOSTRAR campos que devem aparecer no modo criação
     document.getElementById('grupo').closest('.form-group').style.display = 'block';
     document.getElementById('quantidade').closest('.form-group').style.display = 'block';
-    
     switchTab('fornecedor');
-    
     document.getElementById('formModal').classList.add('show');
 };
 
 window.closeFormModal = function(cancelado = false) {
-    const modal = document.getElementById('formModal');
-    modal.classList.remove('show');
-    
-    if (cancelado) {
-        if (editingProductId) {
-            showMessage('Atualização cancelada', 'error');
-        } else {
-            showMessage('Cadastro cancelado', 'error');
-        }
-    }
-    
+    document.getElementById('formModal').classList.remove('show');
+    if (cancelado) showMessage(editingProductId ? 'Atualização cancelada' : 'Cadastro cancelado', 'error');
     editingProductId = null;
-    formCancelado = false;
 };
 
-window.editProduct = async function(id) {
-    const produto = produtos.find(p => p.id === id);
+window.editProduct = function(id) {
+    const produto = state.produtos.find(p => p.id === id);
     if (!produto) return;
 
     editingProductId = id;
-    formCancelado = false;
     document.getElementById('formTitle').textContent = 'Editar Produto';
     document.getElementById('codigo_fornecedor').value = produto.codigo_fornecedor;
     document.getElementById('ncm').value = produto.ncm || '';
@@ -424,13 +545,11 @@ window.editProduct = async function(id) {
     document.getElementById('descricao').value = produto.descricao;
     document.getElementById('unidade').value = produto.unidade || 'UN';
     document.getElementById('valor_unitario').value = parseFloat(produto.valor_unitario).toFixed(2);
-    
-    // OCULTAR campos que não devem aparecer no modo edição
+
     document.getElementById('grupo').closest('.form-group').style.display = 'none';
     document.getElementById('quantidade').closest('.form-group').style.display = 'none';
-    
+
     switchTab('fornecedor');
-    
     document.getElementById('formModal').classList.add('show');
 };
 
@@ -446,106 +565,71 @@ window.saveProduct = async function(event) {
         valor_unitario: parseFloat(document.getElementById('valor_unitario').value)
     };
 
-    // Adicionar grupo_id e quantidade APENAS no modo criação
     if (!editingProductId) {
-        formData.grupo_id = document.getElementById('grupo').value;
-        formData.quantidade = parseInt(document.getElementById('quantidade').value);
-        
-        if (!formData.grupo_id) {
-            showMessage('Selecione um grupo', 'error');
-            switchTab('produto');
-            return;
-        }
+        const grupoRaw = document.getElementById('grupo').value;
+        if (!grupoRaw) { showMessage('Selecione um grupo', 'error'); switchTab('produto'); return; }
+        const grupoObj = JSON.parse(grupoRaw);
+        formData.grupo_codigo = grupoObj.codigo;
+        formData.grupo_nome   = grupoObj.nome;
+        formData.quantidade   = parseInt(document.getElementById('quantidade').value);
     }
 
     try {
-        const url = editingProductId 
-            ? `${API_URL}/estoque/${editingProductId}`
-            : `${API_URL}/estoque`;
-        
+        const url    = editingProductId ? `${API_URL}/estoque/${editingProductId}` : `${API_URL}/estoque`;
         const method = editingProductId ? 'PUT' : 'POST';
 
-        const response = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method,
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Token': sessionToken
-            },
+            headers: { 'Content-Type': 'application/json', ...getHeaders() },
             body: JSON.stringify(formData)
-        });
+        }, 15000);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Erro ao salvar');
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Erro ao salvar');
         }
 
-        const savedProduct = await response.json();
-        
-        await loadProducts();
+        const saved = await res.json();
         closeFormModal(false);
-        
+
         if (editingProductId) {
-            showMessage(`${savedProduct.codigo} atualizado com sucesso`, 'success');
+            showMessage(`Produto ${saved.codigo} atualizado`, 'success');
         } else {
-            showMessage(`${savedProduct.codigo} cadastrado com sucesso`, 'success');
-            showMessage(`Entrada de ${formData.quantidade} unidades registrada`, 'success');
+            showMessage(`Produto ${saved.codigo} cadastrado`, 'success');
+            // Garante que o grupo aparece nos filtros
+            if (!state.grupos.find(g => g.codigo === saved.grupo_codigo)) {
+                state.grupos.push({ codigo: saved.grupo_codigo, nome: saved.grupo_nome });
+                state.grupos.sort((a, b) => a.codigo - b.codigo);
+                renderGruposFilter();
+                populateGrupoSelect();
+            }
         }
+
+        loadProducts(editingProductId ? state.currentPage : 1);
+
     } catch (error) {
         showMessage(error.message, 'error');
     }
 };
 
-// MODAL DE VISUALIZAÇÃO
+// ─── VISUALIZAÇÃO ─────────────────────────────────────────────────────────────
+
 window.viewProduct = function(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
+    const p = state.produtos.find(p => p.id === id);
+    if (!p) return;
 
-    const grupoNome = produto.grupos ? produto.grupos.nome : 'Sem grupo';
-
-    const detailsHtml = `
-        <div class="view-detail-item">
-            <div class="view-detail-label">Código</div>
-            <div class="view-detail-value">${produto.codigo}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Grupo</div>
-            <div class="view-detail-value">${grupoNome}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Marca</div>
-            <div class="view-detail-value">${produto.marca}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Modelo (Cód. Fornecedor)</div>
-            <div class="view-detail-value">${produto.codigo_fornecedor}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">NCM</div>
-            <div class="view-detail-value">${produto.ncm || '-'}</div>
-        </div>
-        <div class="view-detail-item" style="grid-column: 1 / -1;">
-            <div class="view-detail-label">Descrição</div>
-            <div class="view-detail-value">${produto.descricao}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Unidade</div>
-            <div class="view-detail-value">${produto.unidade || 'UN'}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Quantidade</div>
-            <div class="view-detail-value">${produto.quantidade}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Valor Unitário</div>
-            <div class="view-detail-value">R$ ${parseFloat(produto.valor_unitario).toFixed(2)}</div>
-        </div>
-        <div class="view-detail-item">
-            <div class="view-detail-label">Valor Total</div>
-            <div class="view-detail-value">R$ ${(produto.quantidade * parseFloat(produto.valor_unitario)).toFixed(2)}</div>
-        </div>
+    document.getElementById('viewDetails').innerHTML = `
+        <div class="view-detail-item"><div class="view-detail-label">Código</div><div class="view-detail-value">${p.codigo}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Grupo</div><div class="view-detail-value">${p.grupo_nome}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Marca</div><div class="view-detail-value">${p.marca}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Modelo (Cód. Fornecedor)</div><div class="view-detail-value">${p.codigo_fornecedor}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">NCM</div><div class="view-detail-value">${p.ncm || '-'}</div></div>
+        <div class="view-detail-item" style="grid-column:1/-1;"><div class="view-detail-label">Descrição</div><div class="view-detail-value">${p.descricao}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Unidade</div><div class="view-detail-value">${p.unidade || 'UN'}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Quantidade</div><div class="view-detail-value">${p.quantidade}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Valor Unitário</div><div class="view-detail-value">R$ ${parseFloat(p.valor_unitario).toFixed(2)}</div></div>
+        <div class="view-detail-item"><div class="view-detail-label">Valor Total</div><div class="view-detail-value">R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}</div></div>
     `;
-
-    document.getElementById('viewDetails').innerHTML = detailsHtml;
     document.getElementById('viewModal').classList.add('show');
 };
 
@@ -553,16 +637,16 @@ window.closeViewModal = function() {
     document.getElementById('viewModal').classList.remove('show');
 };
 
-// MODAL DE ENTRADA
+// ─── ENTRADA ──────────────────────────────────────────────────────────────────
+
 let entradaProductId = null;
 
 window.openEntradaModal = function(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
-
+    const p = state.produtos.find(p => p.id === id);
+    if (!p) return;
     entradaProductId = id;
-    document.getElementById('entradaProduto').textContent = `${produto.codigo} - ${produto.codigo_fornecedor}`;
-    document.getElementById('entradaQuantidadeAtual').textContent = produto.quantidade;
+    document.getElementById('entradaProduto').textContent = `${p.codigo} - ${p.codigo_fornecedor}`;
+    document.getElementById('entradaQuantidadeAtual').textContent = p.quantidade;
     document.getElementById('entradaQuantidade').value = '';
     document.getElementById('entradaModal').classList.add('show');
 };
@@ -574,52 +658,35 @@ window.closeEntradaModal = function() {
 
 window.processarEntrada = async function(event) {
     event.preventDefault();
-    
     const quantidade = parseInt(document.getElementById('entradaQuantidade').value);
-    
-    if (quantidade <= 0) {
-        showMessage('Quantidade inválida', 'error');
-        return;
-    }
+    if (quantidade <= 0) { showMessage('Quantidade inválida', 'error'); return; }
 
     try {
-        const response = await fetch(`${API_URL}/estoque/${entradaProductId}/movimentar`, {
+        const res = await fetchWithTimeout(`${API_URL}/estoque/${entradaProductId}/movimentar`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Token': sessionToken
-            },
-            body: JSON.stringify({
-                tipo: 'entrada',
-                quantidade: quantidade
-            })
-        });
+            headers: { 'Content-Type': 'application/json', ...getHeaders() },
+            body: JSON.stringify({ tipo: 'entrada', quantidade })
+        }, 15000);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Erro ao processar entrada');
-        }
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Erro'); }
 
-        const produto = await response.json();
-        
-        await loadProducts();
+        const produto = await res.json();
         closeEntradaModal();
         showMessage(`Entrada de ${quantidade} para o item ${produto.codigo}`, 'success');
-    } catch (error) {
-        showMessage(error.message, 'error');
-    }
+        loadProducts(state.currentPage, false);
+    } catch (error) { showMessage(error.message, 'error'); }
 };
 
-// MODAL DE SAÍDA
+// ─── SAÍDA ────────────────────────────────────────────────────────────────────
+
 let saidaProductId = null;
 
 window.openSaidaModal = function(id) {
-    const produto = produtos.find(p => p.id === id);
-    if (!produto) return;
-
+    const p = state.produtos.find(p => p.id === id);
+    if (!p) return;
     saidaProductId = id;
-    document.getElementById('saidaProduto').textContent = `${produto.codigo} - ${produto.codigo_fornecedor}`;
-    document.getElementById('saidaQuantidadeAtual').textContent = produto.quantidade;
+    document.getElementById('saidaProduto').textContent = `${p.codigo} - ${p.codigo_fornecedor}`;
+    document.getElementById('saidaQuantidadeAtual').textContent = p.quantidade;
     document.getElementById('saidaQuantidade').value = '';
     document.getElementById('saidaModal').classList.add('show');
 };
@@ -631,55 +698,33 @@ window.closeSaidaModal = function() {
 
 window.processarSaida = async function(event) {
     event.preventDefault();
-    
     const quantidade = parseInt(document.getElementById('saidaQuantidade').value);
-    
-    if (quantidade <= 0) {
-        showMessage('Quantidade inválida', 'error');
-        return;
-    }
+    if (quantidade <= 0) { showMessage('Quantidade inválida', 'error'); return; }
 
     try {
-        const response = await fetch(`${API_URL}/estoque/${saidaProductId}/movimentar`, {
+        const res = await fetchWithTimeout(`${API_URL}/estoque/${saidaProductId}/movimentar`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Token': sessionToken
-            },
-            body: JSON.stringify({
-                tipo: 'saida',
-                quantidade: quantidade
-            })
-        });
+            headers: { 'Content-Type': 'application/json', ...getHeaders() },
+            body: JSON.stringify({ tipo: 'saida', quantidade })
+        }, 15000);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Erro ao processar saída');
-        }
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Erro'); }
 
-        const produto = await response.json();
-        
-        await loadProducts();
+        const produto = await res.json();
         closeSaidaModal();
-        showMessage(`Saída de ${quantidade} para o item ${produto.codigo}`, 'error');
-    } catch (error) {
-        showMessage(error.message, 'error');
-    }
+        showMessage(`Saída de ${quantidade} do item ${produto.codigo}`, 'error');
+        loadProducts(state.currentPage, false);
+    } catch (error) { showMessage(error.message, 'error'); }
 };
 
-// ===== HISTÓRICO DE MOVIMENTAÇÕES =====
+// ─── HISTÓRICO ────────────────────────────────────────────────────────────────
 
 window.openHistoryModal = async function() {
     currentHistoryType = 'entrada';
     currentHistoryPage = 1;
     document.getElementById('historyModal').classList.add('show');
-    
-    // Reset tab buttons
-    document.querySelectorAll('#historyModal .tab-button').forEach(btn => {
-        btn.classList.remove('active');
-    });
+    document.querySelectorAll('#historyModal .tab-button').forEach(btn => btn.classList.remove('active'));
     document.querySelector('#historyModal .tab-button:first-child').classList.add('active');
-    
     await loadHistoryData();
 };
 
@@ -690,248 +735,147 @@ window.closeHistoryModal = function() {
 window.switchHistoryTab = async function(tipo) {
     currentHistoryType = tipo;
     currentHistoryPage = 1;
-    
-    // Update tab buttons
-    document.querySelectorAll('#historyModal .tab-button').forEach(btn => {
-        btn.classList.remove('active');
-    });
+    document.querySelectorAll('#historyModal .tab-button').forEach(btn => btn.classList.remove('active'));
     event.target.classList.add('active');
-    
     await loadHistoryData();
 };
 
 window.previousHistoryPage = async function() {
-    if (currentHistoryPage > 1) {
-        currentHistoryPage--;
-        await loadHistoryData();
-    }
+    if (currentHistoryPage > 1) { currentHistoryPage--; await loadHistoryData(); }
 };
 
 window.nextHistoryPage = async function() {
-    if (currentHistoryPage < historyData.pagination.totalPages) {
-        currentHistoryPage++;
-        await loadHistoryData();
-    }
+    if (currentHistoryPage < historyData.pagination.totalPages) { currentHistoryPage++; await loadHistoryData(); }
 };
 
 async function loadHistoryData() {
     const tbody = document.getElementById('historyTableBody');
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">Carregando...</td></tr>';
-    
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;">Carregando...</td></tr>';
+
     try {
-        const response = await fetch(`${API_URL}/movimentacoes?tipo=${currentHistoryType}&page=${currentHistoryPage}&limit=4`, {
-            headers: {
-                'X-Session-Token': sessionToken,
-                'Accept': 'application/json'
-            }
-        });
-
-        if (!response.ok) throw new Error('Erro ao carregar histórico');
-
-        historyData = await response.json();
+        const res = await fetchWithTimeout(
+            `${API_URL}/movimentacoes?tipo=${currentHistoryType}&page=${currentHistoryPage}&limit=4`,
+            { method: 'GET', headers: getHeaders() }
+        );
+        if (!res.ok) throw new Error('Erro');
+        historyData = await res.json();
         renderHistoryTable();
         updatePagination();
     } catch (error) {
-        console.error('Erro ao carregar histórico:', error);
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem; color: var(--alert-color);">Erro ao carregar dados</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--alert-color);">Erro ao carregar dados</td></tr>';
     }
 }
 
 function renderHistoryTable() {
     const tbody = document.getElementById('historyTableBody');
-    
-    if (!historyData.data || historyData.data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">Nenhuma movimentação encontrada</td></tr>';
+    if (!historyData.data || !historyData.data.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;">Nenhuma movimentação encontrada</td></tr>';
         return;
     }
-
     tbody.innerHTML = historyData.data.map(mov => {
-        const data = new Date(mov.created_at);
-        const dataFormatada = data.toLocaleDateString('pt-BR');
-        const horaFormatada = data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        
-        return `
-            <tr>
-                <td><strong>${mov.codigo_produto}</strong></td>
-                <td>${mov.marca}</td>
-                <td>${mov.codigo_fornecedor}</td>
-                <td><strong>${mov.quantidade}</strong></td>
-                <td>${dataFormatada} às ${horaFormatada}</td>
-            </tr>
-        `;
+        const d = new Date(mov.created_at);
+        return `<tr>
+            <td><strong>${mov.codigo_produto}</strong></td>
+            <td>${mov.marca}</td>
+            <td>${mov.codigo_fornecedor}</td>
+            <td><strong>${mov.quantidade}</strong></td>
+            <td>${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
+        </tr>`;
     }).join('');
 }
 
 function updatePagination() {
-    const prevBtn = document.getElementById('prevPageBtn');
-    const nextBtn = document.getElementById('nextPageBtn');
-    const pageInfo = document.getElementById('pageInfo');
-    
-    prevBtn.disabled = currentHistoryPage === 1;
-    nextBtn.disabled = currentHistoryPage >= historyData.pagination.totalPages;
-    pageInfo.textContent = `Página ${currentHistoryPage} de ${historyData.pagination.totalPages}`;
+    document.getElementById('prevPageBtn').disabled = currentHistoryPage === 1;
+    document.getElementById('nextPageBtn').disabled = currentHistoryPage >= historyData.pagination.totalPages;
+    document.getElementById('pageInfo').textContent = `Página ${currentHistoryPage} de ${historyData.pagination.totalPages}`;
 }
 
-// ===== GERAR PDF ORGANIZADO POR GRUPO =====
+// ─── PDF ──────────────────────────────────────────────────────────────────────
 
 window.generateInventoryPDF = function() {
-    if (produtos.length === 0) {
-        showMessage('Nenhum produto para gerar relatório', 'error');
-        return;
-    }
+    if (!state.produtos.length) { showMessage('Nenhum produto para gerar relatório', 'error'); return; }
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('landscape');
 
-    // Título
-    doc.setFontSize(18);
-    doc.setFont(undefined, 'bold');
+    doc.setFontSize(18); doc.setFont(undefined, 'bold');
     doc.text('RELATÓRIO DE ESTOQUE', 148, 15, { align: 'center' });
+    doc.setFontSize(10); doc.setFont(undefined, 'normal');
+    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 148, 22, { align: 'center' });
 
-    // Data e hora
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    const dataHora = new Date().toLocaleString('pt-BR');
-    doc.text(`Gerado em: ${dataHora}`, 148, 22, { align: 'center' });
-
-    // Organizar produtos por grupo
-    const produtosPorGrupo = {};
-    produtos.forEach(produto => {
-        const grupoNome = produto.grupos ? produto.grupos.nome : 'SEM GRUPO';
-        if (!produtosPorGrupo[grupoNome]) {
-            produtosPorGrupo[grupoNome] = [];
-        }
-        produtosPorGrupo[grupoNome].push(produto);
+    // Agrupa por grupo_nome
+    const porGrupo = {};
+    state.produtos.forEach(p => {
+        const g = p.grupo_nome || 'SEM GRUPO';
+        if (!porGrupo[g]) porGrupo[g] = [];
+        porGrupo[g].push(p);
     });
 
-    // Ordenar grupos alfabeticamente
-    const gruposOrdenados = Object.keys(produtosPorGrupo).sort();
-
     let startY = 30;
-    const totaisPorGrupo = {};
     let valorTotalGeral = 0;
     let quantidadeTotalGeral = 0;
 
-    gruposOrdenados.forEach((grupoNome) => {
-        // Verificar se precisa adicionar nova página
-        if (startY > 170) {
-            doc.addPage();
-            startY = 15;
-        }
+    Object.keys(porGrupo).sort().forEach(grupoNome => {
+        if (startY > 170) { doc.addPage(); startY = 15; }
 
-        // Nome do grupo
-        doc.setFontSize(14);
-        doc.setFont(undefined, 'bold');
+        doc.setFontSize(14); doc.setFont(undefined, 'bold');
         doc.setTextColor(204, 112, 0);
         doc.text(grupoNome, 14, startY);
         startY += 8;
 
-        // Ordenar produtos por código (crescente)
-        const produtosOrdenados = produtosPorGrupo[grupoNome].sort((a, b) => {
-            return parseInt(a.codigo) - parseInt(b.codigo);
-        });
-
-        // Preparar dados da tabela
-        const tableData = produtosOrdenados.map(p => [
-            p.codigo.toString(),
-            p.marca,
-            p.codigo_fornecedor,
-            p.ncm || '-',
-            p.descricao,
-            p.unidade || 'UN',
-            p.quantidade.toString(),
+        const prods = porGrupo[grupoNome].sort((a, b) => a.codigo - b.codigo);
+        const tableData = prods.map(p => [
+            p.codigo.toString(), p.marca, p.codigo_fornecedor, p.ncm || '-', p.descricao,
+            p.unidade || 'UN', p.quantidade.toString(),
             `R$ ${parseFloat(p.valor_unitario).toFixed(2)}`,
             `R$ ${(p.quantidade * parseFloat(p.valor_unitario)).toFixed(2)}`
         ]);
 
-        // Adicionar tabela
         doc.autoTable({
-            startY: startY,
+            startY,
             head: [['Código', 'Marca', 'Modelo', 'NCM', 'Descrição', 'Un.', 'Qtd', 'Valor Un.', 'Valor Total']],
             body: tableData,
             theme: 'grid',
-            headStyles: {
-                fillColor: [107, 114, 128],
-                textColor: [255, 255, 255],
-                fontSize: 8,
-                fontStyle: 'bold'
-            },
-            bodyStyles: {
-                fontSize: 7,
-                textColor: [26, 26, 26]
-            },
-            alternateRowStyles: {
-                fillColor: [250, 250, 250]
-            },
+            headStyles: { fillColor: [107, 114, 128], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+            bodyStyles: { fontSize: 7, textColor: [26, 26, 26] },
+            alternateRowStyles: { fillColor: [250, 250, 250] },
             columnStyles: {
-                0: { cellWidth: 18 },
-                1: { cellWidth: 22 },
-                2: { cellWidth: 22 },
-                3: { cellWidth: 18 },
-                4: { cellWidth: 80 },
-                5: { cellWidth: 12, halign: 'center' },
-                6: { cellWidth: 15, halign: 'center' },
-                7: { cellWidth: 25, halign: 'right' },
-                8: { cellWidth: 28, halign: 'right' }
+                0: { cellWidth: 18 }, 1: { cellWidth: 22 }, 2: { cellWidth: 22 }, 3: { cellWidth: 18 },
+                4: { cellWidth: 80 }, 5: { cellWidth: 12, halign: 'center' },
+                6: { cellWidth: 15, halign: 'center' }, 7: { cellWidth: 25, halign: 'right' }, 8: { cellWidth: 28, halign: 'right' }
             },
             margin: { left: 14, right: 14 }
         });
 
         startY = doc.lastAutoTable.finalY + 8;
 
-        // Calcular totais do grupo
-        const quantidadeGrupo = produtosOrdenados.reduce((acc, p) => acc + p.quantidade, 0);
-        const valorGrupo = produtosOrdenados.reduce((acc, p) => {
-            return acc + (p.quantidade * parseFloat(p.valor_unitario));
-        }, 0);
+        const qtd = prods.reduce((a, p) => a + p.quantidade, 0);
+        const val = prods.reduce((a, p) => a + p.quantidade * parseFloat(p.valor_unitario), 0);
+        quantidadeTotalGeral += qtd;
+        valorTotalGeral += val;
 
-        totaisPorGrupo[grupoNome] = {
-            quantidade: quantidadeGrupo,
-            valor: valorGrupo,
-            itens: produtosOrdenados.length
-        };
-
-        valorTotalGeral += valorGrupo;
-        quantidadeTotalGeral += quantidadeGrupo;
-
-        // Exibir totais do grupo
-        doc.setFontSize(10);
-        doc.setFont(undefined, 'bold');
-        doc.setTextColor(0, 0, 0);
-        doc.text(`Total de Itens: ${produtosOrdenados.length}`, 14, startY);
-        startY += 6;
-        doc.text(`Quantidade Total: ${quantidadeGrupo}`, 14, startY);
-        startY += 6;
-        doc.text(`Valor Total: R$ ${valorGrupo.toFixed(2)}`, 14, startY);
-        startY += 12;
+        doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0);
+        doc.text(`Total de Itens: ${prods.length}`, 14, startY); startY += 6;
+        doc.text(`Quantidade Total: ${qtd}`, 14, startY); startY += 6;
+        doc.text(`Valor Total: R$ ${val.toFixed(2)}`, 14, startY); startY += 12;
     });
 
-    // Totais gerais na última página
-    if (startY > 160) {
-        doc.addPage();
-        startY = 15;
-    }
-
-    doc.setFontSize(14);
-    doc.setFont(undefined, 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text('TOTAIS GERAIS:', 14, startY);
-    startY += 10;
-
-    doc.setFontSize(11);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Total de Produtos: ${produtos.length}`, 14, startY);
-    startY += 7;
-    doc.text(`Quantidade Total: ${quantidadeTotalGeral}`, 14, startY);
-    startY += 7;
+    if (startY > 160) { doc.addPage(); startY = 15; }
+    doc.setFontSize(14); doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0);
+    doc.text('TOTAIS GERAIS:', 14, startY); startY += 10;
+    doc.setFontSize(11); doc.setFont(undefined, 'normal');
+    doc.text(`Total de Produtos: ${state.produtos.length}`, 14, startY); startY += 7;
+    doc.text(`Quantidade Total: ${quantidadeTotalGeral}`, 14, startY); startY += 7;
     doc.text(`Valor Total em Estoque: R$ ${valorTotalGeral.toFixed(2)}`, 14, startY);
 
-    // Salvar PDF
     doc.save(`Relatorio_Estoque_${new Date().toISOString().split('T')[0]}.pdf`);
     showMessage('Relatório PDF gerado com sucesso!', 'success');
 };
 
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+
 function showMessage(message, type = 'success') {
+    document.querySelectorAll('.floating-message').forEach(m => m.remove());
     const div = document.createElement('div');
     div.className = `floating-message ${type}`;
     div.textContent = message;
@@ -939,5 +883,5 @@ function showMessage(message, type = 'success') {
     setTimeout(() => {
         div.style.animation = 'slideOut 0.3s ease forwards';
         setTimeout(() => div.remove(), 300);
-    }, 2000);
+    }, 3000);
 }
