@@ -47,15 +47,6 @@
                     </svg>
                     <input type="text" id="search" placeholder="Buscar por código, marca, modelo ou descrição..." oninput="filterProducts()">
                     
-                    <!-- Botão de Histórico -->
-                    <button class="sync-btn" onclick="openHistoryModal()" title="Histórico de Movimentações">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 3v5h5"></path>
-                            <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path>
-                            <path d="M12 7v5l4 2"></path>
-                        </svg>
-                    </button>
-                    
                     <!-- Botão PDF -->
                     <button class="sync-btn" onclick="generateInventoryPDF()" title="Gerar Relatório PDF">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -275,61 +266,6 @@
                     <button type="submit" class="danger">Confirmar Saída</button>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <!-- MODAL DE HISTÓRICO DE MOVIMENTAÇÕES -->
-    <div class="modal-overlay" id="historyModal">
-        <div class="modal-content modal-large">
-            <div class="modal-header">
-                <h3 class="modal-title">Histórico de Movimentações</h3>
-                <button class="modal-close-btn" onclick="closeHistoryModal()">✕</button>
-            </div>
-            
-            <!-- Abas de Entrada/Saída -->
-            <div class="tabs">
-                <button class="tab-button active" onclick="switchHistoryTab('entrada')">Entrada</button>
-                <button class="tab-button" onclick="switchHistoryTab('saida')">Saída</button>
-            </div>
-
-            <!-- Tabela de Movimentações -->
-            <div class="history-content">
-                <table class="history-table">
-                    <thead>
-                        <tr>
-                            <th>Código</th>
-                            <th>Marca</th>
-                            <th>Modelo</th>
-                            <th>Qtd</th>
-                            <th>Data e Hora</th>
-                        </tr>
-                    </thead>
-                    <tbody id="historyTableBody">
-                        <tr>
-                            <td colspan="5" style="text-align: center; padding: 2rem;">Carregando...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Paginação -->
-            <div class="pagination">
-                <button class="pagination-btn" onclick="previousHistoryPage()" id="prevPageBtn" disabled>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="15 18 9 12 15 6"></polyline>
-                    </svg>
-                </button>
-                <span id="pageInfo">Página 1 de 1</span>
-                <button class="pagination-btn" onclick="nextHistoryPage()" id="nextPageBtn" disabled>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                </button>
-            </div>
-
-            <div class="modal-actions">
-                <button type="button" onclick="closeHistoryModal()" class="secondary">Fechar</button>
-            </div>
         </div>
     </div>
 
