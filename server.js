@@ -88,7 +88,6 @@ async function verificarAutenticacao(req, res, next) {
         }
 
         req.user = sessionData.session;
-        req.sessionToken = sessionToken;
         next();
     } catch (error) {
         if (error.name === 'AbortError' || error.code === 'ECONNREFUSED') {
@@ -109,8 +108,8 @@ app.use(express.static(publicPath, {
     dotfiles: 'deny',
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        else if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
-        else if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        else if (filePath.endsWith('.css'))  res.setHeader('Content-Type', 'text/css; charset=utf-8');
+        else if (filePath.endsWith('.js'))   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     }
 }));
 
@@ -118,14 +117,16 @@ app.use(express.static(publicPath, {
 
 app.get('/health', async (req, res) => {
     try {
-        const { count, error } = await supabase.from('estoque').select('*', { count: 'exact', head: true });
+        const { count, error } = await supabase
+            .from('estoque')
+            .select('*', { count: 'exact', head: true });
         res.json({
             status: error ? 'unhealthy' : 'healthy',
             database: error ? 'disconnected' : 'connected',
             timestamp: new Date().toISOString(),
             produtos: count || 0
         });
-    } catch (error) {
+    } catch (e) {
         res.status(500).json({ status: 'unhealthy', timestamp: new Date().toISOString() });
     }
 });
@@ -135,36 +136,25 @@ app.head('/api/estoque', (req, res) => res.status(200).end());
 app.use('/api', verificarAutenticacao);
 
 // ============================================================
-// ESTRUTURA DA TABELA ÚNICA: estoque
-// ─────────────────────────────────
-// id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
-// codigo          INTEGER UNIQUE NOT NULL         ← gerado automaticamente
-// codigo_fornecedor TEXT NOT NULL
-// ncm             TEXT
-// marca           TEXT NOT NULL
-// descricao       TEXT NOT NULL
-// unidade         TEXT NOT NULL DEFAULT 'UN'
-// quantidade      INTEGER NOT NULL DEFAULT 0
-// valor_unitario  NUMERIC(12,2) NOT NULL
-// grupo_codigo    INTEGER NOT NULL                ← ex: 10000, 20000...
-// grupo_nome      TEXT NOT NULL                  ← ex: 'ILUMINAÇÃO'
-// timestamp       TIMESTAMPTZ DEFAULT now()
-//
-// TABELA: movimentacoes
+// TABELA ÚNICA: estoque
 // ─────────────────────
-// id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
-// estoque_id      UUID REFERENCES estoque(id) ON DELETE CASCADE
-// tipo            TEXT NOT NULL  ('entrada' | 'saida')
-// quantidade      INTEGER NOT NULL
-// codigo_produto  INTEGER
-// marca           TEXT
-// codigo_fornecedor TEXT
-// created_at      TIMESTAMPTZ DEFAULT now()
+// id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+// codigo            INTEGER UNIQUE NOT NULL
+// codigo_fornecedor TEXT NOT NULL
+// ncm               TEXT
+// marca             TEXT NOT NULL
+// descricao         TEXT NOT NULL
+// unidade           TEXT NOT NULL DEFAULT 'UN'
+// quantidade        INTEGER NOT NULL DEFAULT 0
+// valor_unitario    NUMERIC(12,2) NOT NULL
+// grupo_codigo      INTEGER NOT NULL
+// grupo_nome        TEXT NOT NULL
+// timestamp         TIMESTAMPTZ DEFAULT now()
 // ============================================================
 
 // ─── GRUPOS (derivados da tabela estoque) ────────────────────────────────────
 
-// Listar grupos disponíveis
+// Listar grupos únicos
 app.get('/api/grupos', async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -174,7 +164,6 @@ app.get('/api/grupos', async (req, res) => {
 
         if (error) throw error;
 
-        // Deduplica por grupo_codigo
         const seen = new Set();
         const grupos = (data || []).filter(row => {
             if (seen.has(row.grupo_codigo)) return false;
@@ -184,60 +173,58 @@ app.get('/api/grupos', async (req, res) => {
 
         res.json(grupos);
     } catch (error) {
+        console.error('❌ GET /grupos:', error);
         res.status(500).json({ error: 'Erro ao buscar grupos' });
     }
 });
 
-// Criar novo grupo (não cria registro, só valida e retorna o código gerado)
+// Calcular próximo código de grupo (sem criar registro)
 app.post('/api/grupos', async (req, res) => {
     try {
         const { nome } = req.body;
         if (!nome) return res.status(400).json({ error: 'Nome do grupo é obrigatório' });
 
-        // Verificar se nome já existe
+        const nomeLimpo = nome.trim().toUpperCase();
+
+        // Verificar duplicidade
         const { data: existing } = await supabase
             .from('estoque')
             .select('grupo_nome')
-            .ilike('grupo_nome', nome.trim())
+            .ilike('grupo_nome', nomeLimpo)
             .limit(1);
 
         if (existing && existing.length > 0) {
             return res.status(400).json({ error: 'Grupo já existe' });
         }
 
-        // Calcular próximo código de grupo
+        // Calcular próximo código (múltiplos de 10000)
         const { data: maxData } = await supabase
             .from('estoque')
             .select('grupo_codigo')
             .order('grupo_codigo', { ascending: false })
             .limit(1);
 
-        const proximoCodigo = maxData && maxData.length > 0
-            ? Math.ceil(maxData[0].grupo_codigo / 10000) * 10000 + 10000
-            : 10000;
+        const ultimoCodigo = maxData && maxData.length > 0 ? maxData[0].grupo_codigo : 0;
+        const proximoCodigo = Math.ceil(ultimoCodigo / 10000) * 10000 + 10000;
 
-        res.status(201).json({
-            codigo: proximoCodigo,
-            nome: nome.trim().toUpperCase()
-        });
+        res.status(201).json({ codigo: proximoCodigo, nome: nomeLimpo });
     } catch (error) {
+        console.error('❌ POST /grupos:', error);
         res.status(500).json({ error: 'Erro ao criar grupo' });
     }
 });
 
-// Excluir grupo — exclui TODOS os produtos do grupo (movimentações excluídas em cascade)
+// Excluir grupo — remove TODOS os produtos do grupo
 app.delete('/api/grupos/:grupo_codigo', async (req, res) => {
     try {
         const grupo_codigo = parseInt(req.params.grupo_codigo);
-        if (isNaN(grupo_codigo)) return res.status(400).json({ error: 'Código de grupo inválido' });
+        if (isNaN(grupo_codigo)) return res.status(400).json({ error: 'Código inválido' });
 
-        // Verificar quantos itens existem
         const { count } = await supabase
             .from('estoque')
             .select('*', { count: 'exact', head: true })
             .eq('grupo_codigo', grupo_codigo);
 
-        // Excluir todos os produtos do grupo (ON DELETE CASCADE cuida das movimentações)
         const { error } = await supabase
             .from('estoque')
             .delete()
@@ -245,36 +232,35 @@ app.delete('/api/grupos/:grupo_codigo', async (req, res) => {
 
         if (error) throw error;
 
-        res.json({ message: `Grupo e ${count || 0} produto(s) excluídos com sucesso` });
+        res.json({ message: `Grupo e ${count || 0} produto(s) excluídos` });
     } catch (error) {
+        console.error('❌ DELETE /grupos/:codigo:', error);
         res.status(500).json({ error: 'Erro ao excluir grupo' });
     }
 });
 
-// ─── ESTOQUE (paginado) ───────────────────────────────────────────────────────
+// ─── ESTOQUE ──────────────────────────────────────────────────────────────────
 
-// Listar produtos com paginação
+// Listar produtos (paginado)
 app.get('/api/estoque', async (req, res) => {
     try {
-        const page  = parseInt(req.query.page)  || 1;
-        const limit = Math.min(parseInt(req.query.limit) || 50, 50);
+        const page         = parseInt(req.query.page)  || 1;
+        const limit        = Math.min(parseInt(req.query.limit) || 50, 50);
         const grupo_codigo = req.query.grupo_codigo ? parseInt(req.query.grupo_codigo) : null;
-        const search = req.query.search || null;
-
-        const from = (page - 1) * limit;
-        const to   = from + limit - 1;
+        const search       = req.query.search || null;
+        const from         = (page - 1) * limit;
+        const to           = from + limit - 1;
 
         let query = supabase
             .from('estoque')
             .select('*', { count: 'exact' })
             .order('grupo_codigo', { ascending: true })
-            .order('codigo', { ascending: true });
+            .order('codigo',       { ascending: true });
 
         if (grupo_codigo) query = query.eq('grupo_codigo', grupo_codigo);
 
         if (search) {
             query = query.or(
-                `codigo::text.ilike.%${search}%,` +
                 `codigo_fornecedor.ilike.%${search}%,` +
                 `marca.ilike.%${search}%,` +
                 `descricao.ilike.%${search}%`
@@ -318,9 +304,15 @@ app.get('/api/estoque/:id', async (req, res) => {
 // Criar produto
 app.post('/api/estoque', async (req, res) => {
     try {
-        const { codigo_fornecedor, ncm, marca, descricao, unidade, quantidade, valor_unitario, grupo_codigo, grupo_nome } = req.body;
+        const {
+            codigo_fornecedor, ncm, marca, descricao,
+            unidade, quantidade, valor_unitario,
+            grupo_codigo, grupo_nome
+        } = req.body;
 
-        if (!codigo_fornecedor || !marca || !descricao || quantidade === undefined || valor_unitario === undefined || !grupo_codigo || !grupo_nome) {
+        if (!codigo_fornecedor || !marca || !descricao ||
+            quantidade === undefined || valor_unitario === undefined ||
+            !grupo_codigo || !grupo_nome) {
             return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
         }
 
@@ -335,7 +327,7 @@ app.post('/api/estoque', async (req, res) => {
             return res.status(400).json({ error: 'Código do fornecedor já cadastrado' });
         }
 
-        // Calcular próximo código sequencial dentro do grupo
+        // Próximo código sequencial dentro do grupo
         const { data: ultimoDoGrupo } = await supabase
             .from('estoque')
             .select('codigo')
@@ -350,33 +342,22 @@ app.post('/api/estoque', async (req, res) => {
         const { data, error } = await supabase
             .from('estoque')
             .insert([{
-                codigo: proximoCodigo,
+                codigo:            proximoCodigo,
                 codigo_fornecedor: codigo_fornecedor.trim(),
-                ncm: ncm ? ncm.trim() : null,
-                marca: marca.trim().toUpperCase(),
-                descricao: descricao.trim().toUpperCase(),
-                unidade: unidade || 'UN',
-                quantidade: parseInt(quantidade),
-                valor_unitario: parseFloat(valor_unitario),
-                grupo_codigo: parseInt(grupo_codigo),
-                grupo_nome: grupo_nome.trim().toUpperCase(),
-                timestamp: new Date().toISOString()
+                ncm:               ncm ? ncm.trim() : null,
+                marca:             marca.trim().toUpperCase(),
+                descricao:         descricao.trim().toUpperCase(),
+                unidade:           unidade || 'UN',
+                quantidade:        parseInt(quantidade),
+                valor_unitario:    parseFloat(valor_unitario),
+                grupo_codigo:      parseInt(grupo_codigo),
+                grupo_nome:        grupo_nome.trim().toUpperCase(),
+                timestamp:         new Date().toISOString()
             }])
             .select()
             .single();
 
         if (error) throw error;
-
-        // Registrar movimentação de entrada inicial
-        await supabase.from('movimentacoes').insert([{
-            estoque_id: data.id,
-            tipo: 'entrada',
-            quantidade: parseInt(quantidade),
-            codigo_produto: data.codigo,
-            marca: data.marca,
-            codigo_fornecedor: data.codigo_fornecedor
-        }]);
-
         res.status(201).json(data);
     } catch (error) {
         console.error('❌ POST /estoque:', error);
@@ -397,12 +378,12 @@ app.put('/api/estoque/:id', async (req, res) => {
             .from('estoque')
             .update({
                 codigo_fornecedor: codigo_fornecedor.trim(),
-                ncm: ncm ? ncm.trim() : null,
-                marca: marca.trim().toUpperCase(),
-                descricao: descricao.trim().toUpperCase(),
-                unidade: unidade || 'UN',
-                valor_unitario: parseFloat(valor_unitario),
-                timestamp: new Date().toISOString()
+                ncm:               ncm ? ncm.trim() : null,
+                marca:             marca.trim().toUpperCase(),
+                descricao:         descricao.trim().toUpperCase(),
+                unidade:           unidade || 'UN',
+                valor_unitario:    parseFloat(valor_unitario),
+                timestamp:         new Date().toISOString()
             })
             .eq('id', req.params.id)
             .select()
@@ -415,54 +396,67 @@ app.put('/api/estoque/:id', async (req, res) => {
     }
 });
 
-// Movimentação (entrada/saída)
-app.post('/api/estoque/:id/movimentar', async (req, res) => {
+// Entrada de estoque
+app.post('/api/estoque/:id/entrada', async (req, res) => {
     try {
-        const { tipo, quantidade } = req.body;
-
-        if (!['entrada', 'saida'].includes(tipo) || !quantidade || quantidade <= 0) {
-            return res.status(400).json({ error: 'Dados inválidos' });
+        const { quantidade } = req.body;
+        if (!quantidade || parseInt(quantidade) <= 0) {
+            return res.status(400).json({ error: 'Quantidade inválida' });
         }
 
         const { data: produto, error: fetchError } = await supabase
-            .from('estoque')
-            .select('*')
-            .eq('id', req.params.id)
-            .single();
+            .from('estoque').select('quantidade').eq('id', req.params.id).single();
 
         if (fetchError || !produto) return res.status(404).json({ error: 'Produto não encontrado' });
 
-        let novaQuantidade = produto.quantidade;
-        if (tipo === 'entrada') {
-            novaQuantidade += parseInt(quantidade);
-        } else {
-            if (produto.quantidade < parseInt(quantidade)) {
-                return res.status(400).json({ error: 'Quantidade insuficiente em estoque' });
-            }
-            novaQuantidade -= parseInt(quantidade);
-        }
-
         const { data, error } = await supabase
             .from('estoque')
-            .update({ quantidade: novaQuantidade, timestamp: new Date().toISOString() })
+            .update({
+                quantidade: produto.quantidade + parseInt(quantidade),
+                timestamp:  new Date().toISOString()
+            })
             .eq('id', req.params.id)
             .select()
             .single();
 
         if (error) throw error;
-
-        await supabase.from('movimentacoes').insert([{
-            estoque_id: produto.id,
-            tipo,
-            quantidade: parseInt(quantidade),
-            codigo_produto: produto.codigo,
-            marca: produto.marca,
-            codigo_fornecedor: produto.codigo_fornecedor
-        }]);
-
         res.json(data);
     } catch (error) {
-        res.status(500).json({ error: 'Erro ao movimentar estoque' });
+        res.status(500).json({ error: 'Erro ao registrar entrada' });
+    }
+});
+
+// Saída de estoque
+app.post('/api/estoque/:id/saida', async (req, res) => {
+    try {
+        const { quantidade } = req.body;
+        if (!quantidade || parseInt(quantidade) <= 0) {
+            return res.status(400).json({ error: 'Quantidade inválida' });
+        }
+
+        const { data: produto, error: fetchError } = await supabase
+            .from('estoque').select('quantidade').eq('id', req.params.id).single();
+
+        if (fetchError || !produto) return res.status(404).json({ error: 'Produto não encontrado' });
+
+        if (produto.quantidade < parseInt(quantidade)) {
+            return res.status(400).json({ error: 'Quantidade insuficiente em estoque' });
+        }
+
+        const { data, error } = await supabase
+            .from('estoque')
+            .update({
+                quantidade: produto.quantidade - parseInt(quantidade),
+                timestamp:  new Date().toISOString()
+            })
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: 'Erro ao registrar saída' });
     }
 });
 
@@ -477,45 +471,13 @@ app.delete('/api/estoque/:id', async (req, res) => {
     }
 });
 
-// ─── MOVIMENTAÇÕES ────────────────────────────────────────────────────────────
-
-app.get('/api/movimentacoes', async (req, res) => {
-    try {
-        const { tipo, page = 1, limit = 4 } = req.query;
-        const offset = (page - 1) * parseInt(limit);
-
-        let query = supabase
-            .from('movimentacoes')
-            .select('*', { count: 'exact' })
-            .order('created_at', { ascending: false })
-            .range(offset, offset + parseInt(limit) - 1);
-
-        if (tipo && ['entrada', 'saida'].includes(tipo)) query = query.eq('tipo', tipo);
-
-        const { data, error, count } = await query;
-        if (error) throw error;
-
-        res.json({
-            data: data || [],
-            pagination: {
-                total: count,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                totalPages: Math.ceil(count / parseInt(limit))
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: 'Erro ao buscar movimentações' });
-    }
-});
-
 // ─── ROTAS PRINCIPAIS ─────────────────────────────────────────────────────────
 
-app.get('/', (req, res) => res.sendFile(path.join(publicPath, 'index.html')));
+app.get('/',    (req, res) => res.sendFile(path.join(publicPath, 'index.html')));
 app.get('/app', (req, res) => res.sendFile(path.join(publicPath, 'index.html')));
 
 app.use((req, res) => res.status(404).json({ error: '404 - Rota não encontrada' }));
-app.use((error, req, res, next) => res.status(500).json({ error: 'Erro interno do servidor' }));
+app.use((err, req, res, next) => res.status(500).json({ error: 'Erro interno do servidor' }));
 
 // ─── INICIAR ──────────────────────────────────────────────────────────────────
 
@@ -523,7 +485,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('\n🚀 ========================================');
     console.log('✅ Servidor Estoque ONLINE');
     console.log(`✅ Porta: ${PORT}`);
-    console.log('✅ Tabela única: estoque + movimentacoes');
+    console.log('✅ Tabela única: estoque');
     console.log('🚀 ========================================\n');
 });
 
@@ -533,7 +495,9 @@ process.on('SIGTERM', () => {
 
 (async () => {
     try {
-        const { count, error } = await supabase.from('estoque').select('*', { count: 'exact', head: true });
+        const { count, error } = await supabase
+            .from('estoque')
+            .select('*', { count: 'exact', head: true });
         if (error) console.error('❌ Erro Supabase:', error.message);
         else console.log(`✅ Supabase conectado (${count || 0} produtos)`);
     } catch (e) {
