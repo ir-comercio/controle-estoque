@@ -958,3 +958,38 @@ button.small {
     line-height: 1.7;
 }
 .modal-actions-no-border { border-top: none !important; padding-top: 0 !important; }
+
+/* ─── MODAL DELETE (idêntico ao padrão transportadoras) ─────────────────────── */
+.modal-delete {
+    position: relative;
+    padding: 2.5rem 2rem 2rem 2rem;
+    max-width: 500px !important;
+}
+
+.modal-delete .close-modal {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+}
+
+.close-modal {
+    background: none !important;
+    border: none !important;
+    font-size: 1.5rem;
+    color: #6B7280;
+    cursor: pointer;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.close-modal:hover {
+    color: #374151;
+    background: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+}
