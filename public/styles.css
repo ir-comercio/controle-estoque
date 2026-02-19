@@ -931,7 +931,7 @@ button.small {
 .pag-btn-active { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
 .pag-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .pag-nav { font-size: 1rem; font-weight: 700; }
-.pag-ellipsis { padding: 0.4rem 0.4rem; color: var(--text-secondary); font-size: 0.9rem; user-select: none; }
+.pag-ellipsis { padding: 0.4rem; color: var(--text-secondary); font-size: 0.9rem; user-select: none; }
 @media (max-width: 768px) { .paginacao-wrapper { flex-direction: column; align-items: flex-start; } }
 
 /* ─── BOTÃO GERENCIAR GRUPOS ────────────────────────────────────────────────── */
@@ -944,8 +944,17 @@ button.small {
     align-items: center;
     justify-content: center;
 }
-.brand-button-manage:hover { border-color: var(--primary) !important; color: var(--primary) !important; background: rgba(204,112,0,0.05) !important; }
+.brand-button-manage:hover {
+    border-color: var(--primary) !important;
+    color: var(--primary) !important;
+    background: rgba(204,112,0,0.05) !important;
+}
 
-/* ─── MODAL SMALL (excluir grupo) ───────────────────────────────────────────── */
-.modal-message-delete { text-align: center; padding: 1rem 0.5rem; font-size: 1rem; line-height: 1.6; }
+/* ─── MODAL EXCLUIR GRUPO ───────────────────────────────────────────────────── */
+.modal-message-delete {
+    text-align: center;
+    padding: 1.25rem 0.5rem;
+    font-size: 1rem;
+    line-height: 1.7;
+}
 .modal-actions-no-border { border-top: none !important; padding-top: 0 !important; }
