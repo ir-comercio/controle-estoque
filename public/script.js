@@ -280,19 +280,14 @@ function closeManageGroupsModal() {
 function confirmarExcluirGrupo(grupoCodigo, grupoNome) {
     closeManageGroupsModal();
     document.body.insertAdjacentHTML('beforeend', `
-        <div class="modal-overlay show" id="deleteGroupModal">
-            <div class="modal-content modal-small">
-                <button class="modal-close-btn" onclick="closeDeleteGroupModal()">✕</button>
+        <div class="modal-overlay" id="deleteGroupModal" style="display:flex;">
+            <div class="modal-content modal-delete">
+                <button class="close-modal" onclick="closeDeleteGroupModal()">✕</button>
                 <div class="modal-message-delete">
-                    Excluir o grupo <strong>${grupoNome}</strong>?<br>
-                    <span style="color:var(--alert-color);font-size:0.9rem;">
-                        Todos os produtos deste grupo serão excluídos permanentemente.
-                    </span>
+                    Tem certeza que deseja excluir o grupo <strong>${grupoNome}</strong> e todos os seus produtos?
                 </div>
                 <div class="modal-actions modal-actions-no-border">
-                    <button type="button" onclick="excluirGrupo(${grupoCodigo})" class="danger">
-                        Sim, excluir tudo
-                    </button>
+                    <button type="button" onclick="excluirGrupo(${grupoCodigo})" class="danger">Sim</button>
                     <button type="button" onclick="closeDeleteGroupModal()" class="danger">Cancelar</button>
                 </div>
             </div>
@@ -300,7 +295,8 @@ function confirmarExcluirGrupo(grupoCodigo, grupoNome) {
 }
 
 function closeDeleteGroupModal() {
-    document.getElementById('deleteGroupModal')?.remove();
+    const modal = document.getElementById('deleteGroupModal');
+    if (modal) { modal.style.animation = 'fadeOut 0.2s ease forwards'; setTimeout(() => modal.remove(), 200); }
 }
 
 async function excluirGrupo(grupoCodigo) {
